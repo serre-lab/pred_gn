@@ -1,0 +1,13 @@
+
+.ipynb_checkpoints/
+__pycache__/
+
+config/dataset/
+
+*.npy
+*.pyc
+*.ipynb
+*.log
+
+*.out
+*.err
