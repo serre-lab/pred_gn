@@ -17,6 +17,7 @@ from .build import DATASET_REGISTRY
 logger = logging.get_logger(__name__)
 
 
+
 @DATASET_REGISTRY.register()
 class Moments(torch.utils.data.Dataset):
     """
@@ -57,6 +58,8 @@ class Moments(torch.utils.data.Dataset):
         self.mode = mode
         self.cfg = cfg
 
+        
+
         self._video_meta = {}
         self._num_retries = num_retries
         # For training or validation mode, one single clip is sampled from every
@@ -84,6 +87,10 @@ class Moments(torch.utils.data.Dataset):
         assert os.path.exists(path_to_file), "{} dir not found".format(
             path_to_file
         )
+        
+        self.num_repeated_samples = self.cfg.DATA.NUM_REPEATED_SAMPLES
+        self._use_color_augmentation = self.cfg.DATA.COLOR_AUGMENTATION
+        
         self._classes = []
         with open(os.path.join(self.cfg.DATA.PATH_TO_DATA_DIR, 'moments_categories.txt')) as f:
             self._classes = f.readlines()
@@ -202,22 +209,75 @@ class Moments(torch.utils.data.Dataset):
             # Perform color normalization.
             frames = frames.float()
             frames = frames / 255.0
-            frames = frames - torch.tensor(self.cfg.DATA.MEAN)
-            frames = frames / torch.tensor(self.cfg.DATA.STD)
-            # T H W C -> C T H W.
-            frames = frames.permute(3, 0, 1, 2)
-            # Perform data augmentation.
-            frames = self.spatial_sampling(
-                frames,
-                spatial_idx=spatial_sample_index,
-                min_scale=min_scale,
-                max_scale=max_scale,
-                crop_size=crop_size,
-            )
+            
+            if self.mode == "train" and self.num_repeated_samples>1:
+                out_frames = []
+                for i in range(self.num_repeated_samples):
+                    sample_frames = frames.clone()
 
-            label = self._labels[index]
-            frames = utils.pack_pathway_output(self.cfg, frames)
-            return frames, label, index, {}
+                    if self._use_color_augmentation:
+                        # T H W C -> T C H W. for color augmentation
+                        sample_frames = sample_frames.permute(0, 3, 1, 2)
+                        
+                        # sample_frames = transform.color_jitter(
+                        sample_frames = transform.random_color_augmentation(
+                            sample_frames,
+                            img_brightness=0.4,
+                            img_contrast=0.4,
+                            img_saturation=0.4,
+                            img_illumination=0
+                        )
+                        
+                        
+                        # T C H W -> C T H W.
+                        sample_frames = sample_frames.permute(1, 0, 2, 3)
+
+                    else:
+                        # T H W C -> C T H W.
+                        sample_frames = sample_frames.permute(3, 0, 1, 2)
+                    
+                    sample_frames = sample_frames - torch.tensor(self.cfg.DATA.MEAN)[:,None,None,None]
+                    sample_frames = sample_frames / torch.tensor(self.cfg.DATA.STD)[:,None,None,None]
+                    
+                    # Perform data augmentation.
+                    sample_frames = self.spatial_sampling(
+                        sample_frames,
+                        spatial_idx=spatial_sample_index,
+                        min_scale=min_scale,
+                        max_scale=max_scale,
+                        crop_size=crop_size,
+                    )
+                    
+                    sample_frames = transform.random_spatial_augmentation(sample_frames.permute(1,0,2,3), rotate=40, shear=0.3).permute(1,0,2,3)
+
+                    # out_frames.append(sample_frames)
+                    out_frames.append(utils.pack_pathway_output(self.cfg, sample_frames))
+
+                # label = torch.Tensor([self._labels[index]]*self.num_repeated_samples)
+                label = self._labels[index]
+                frames = [torch.stack([o[i] for o in out_frames],0)  for i in range(len(out_frames[0]))]
+                
+                # frames = utils.pack_pathway_output(self.cfg, out_frames)
+                return frames, label, index, {}
+            
+            else:
+                frames = frames - torch.tensor(self.cfg.DATA.MEAN)
+                frames = frames / torch.tensor(self.cfg.DATA.STD)
+                # T H W C -> C T H W.
+                frames = frames.permute(3, 0, 1, 2)
+                # Perform data augmentation.
+                frames = self.spatial_sampling(
+                    frames,
+                    spatial_idx=spatial_sample_index,
+                    min_scale=min_scale,
+                    max_scale=max_scale,
+                    crop_size=crop_size,
+                )
+
+                label = self._labels[index]
+                
+                frames = utils.pack_pathway_output(self.cfg, frames)
+                return frames, label, index, {}
         else:
             raise RuntimeError(
                 "Failed to fetch video after {} retries.".format(
@@ -231,6 +291,160 @@ class Moments(torch.utils.data.Dataset):
             (int): the number of videos in the dataset.
         """
         return len(self._path_to_videos)
+
+    def get_example_by_class(self, class_idx):
+        class_idx = self._label[self._label==class_idx]
+        idx = np.random.choice(len(class_idx))
+        
+        return self.__getitem__(idx) 
+    
+    ##############################################################################################
+    ##############################################################################################
+
+    def get_augmented_examples(self, index):
+        if self.mode in ["train", "val"]:
+            # -1 indicates random sampling.
+            temporal_sample_index = -1
+            spatial_sample_index = -1
+            min_scale = self.cfg.DATA.TRAIN_JITTER_SCALES[0]
+            max_scale = self.cfg.DATA.TRAIN_JITTER_SCALES[1]
+            crop_size = self.cfg.DATA.TRAIN_CROP_SIZE
+        elif self.mode in ["test"]:
+            temporal_sample_index = -1
+            spatial_sample_index = -1
+            # temporal_sample_index = (
+            #     self._spatial_temporal_idx[index]
+            #     // self.cfg.TEST.NUM_SPATIAL_CROPS
+            # )
+            # spatial_sample_index is in [0, 1, 2]. Corresponding to left,
+            # center, or right if width is larger than height, and top, middle,
+            # or bottom if height is larger than width.
+            # spatial_sample_index = (
+            #     self._spatial_temporal_idx[index]
+            #     % self.cfg.TEST.NUM_SPATIAL_CROPS
+            # )
+            min_scale, max_scale, crop_size = [self.cfg.DATA.TEST_CROP_SIZE] * 3
+            # The testing is deterministic and no jitter should be performed.
+            # min_scale, max_scale, and crop_size are expect to be the same.
+            assert len({min_scale, max_scale, crop_size}) == 1
+        else:
+            raise NotImplementedError(
+                "Does not support {} mode".format(self.mode)
+            )
+
+        # Try to decode and sample a clip from a video. If the video can not be
+        # decoded, repeatly find a random video replacement that can be decoded.
+        for _ in range(self._num_retries):
+            video_container = None
+            try:
+                video_container = container.get_video_container(
+                    self._path_to_videos[index],
+                    self.cfg.DATA_LOADER.ENABLE_MULTI_THREAD_DECODE,
+                )
+            except Exception as e:
+                logger.info(
+                    "Failed to load video from {} with error {}".format(
+                        self._path_to_videos[index], e
+                    )
+                )
+            # Select a random video if the current video was not able to access.
+            if video_container is None:
+                index = random.randint(0, len(self._path_to_videos) - 1)
+                continue
+
+            # Decode video. Meta info is used to perform selective decoding.
+            frames = decoder.decode(
+                video_container,
+                self.cfg.DATA.SAMPLING_RATE,
+                self.cfg.DATA.NUM_FRAMES,
+                temporal_sample_index,
+                self.cfg.TEST.NUM_ENSEMBLE_VIEWS,
+                video_meta=self._video_meta[index],
+                target_fps=30,
+            )
+
+            # If decoding failed (wrong format, video is too short, and etc),
+            # select another video.
+            if frames is None:
+                index = random.randint(0, len(self._path_to_videos) - 1)
+                continue
+
+            # Perform color normalization.
+            frames = frames.float()
+            frames = frames / 255.0
+            
+            if self.mode == "train" and self.num_repeated_samples>1:
+                out_frames = []
+                for i in range(self.num_repeated_samples):
+                    sample_frames = frames.clone()
+
+                    if self._use_color_augmentation:
+                        # T H W C -> T C H W. for color augmentation
+                        sample_frames = sample_frames.permute(0, 3, 1, 2)
+                        
+                        # sample_frames = transform.color_jitter(
+                        sample_frames = transform.random_color_augmentation(
+                            sample_frames,
+                            img_brightness=0.4,
+                            img_contrast=0.4,
+                            img_saturation=0.4,
+                            img_illumination=0.4
+                        )
+
+                        sample_frames = transform.random_spatial_augmentation(sample_frames, rotate=40, shear=0.3)
+
+                        # T C H W -> C T H W.
+                        sample_frames = sample_frames.permute(1, 0, 2, 3)
+
+                    else:
+                        # T H W C -> C T H W.
+                        sample_frames = sample_frames.permute(3, 0, 1, 2)
+                    
+                    sample_frames = sample_frames - torch.tensor(self.cfg.DATA.MEAN)[:,None,None,None]
+                    sample_frames = sample_frames / torch.tensor(self.cfg.DATA.STD)[:,None,None,None]
+                    
+                    # Perform data augmentation.
+                    sample_frames = self.spatial_sampling(
+                        sample_frames,
+                        spatial_idx=spatial_sample_index,
+                        min_scale=min_scale,
+                        max_scale=max_scale,
+                        crop_size=crop_size,
+                    )
+                    # out_frames.append(sample_frames)
+                    out_frames.append(utils.pack_pathway_output(self.cfg, sample_frames))
+
+                # label = torch.Tensor([self._labels[index]]*self.num_repeated_samples)
+                label = self._labels[index]
+                frames = [torch.stack([o[i] for o in out_frames],0)  for i in range(len(out_frames[0]))]
+                
+                # frames = utils.pack_pathway_output(self.cfg, out_frames)
+                return frames, label, index, {}
+            
+            else:
+                frames = frames - torch.tensor(self.cfg.DATA.MEAN)
+                frames = frames / torch.tensor(self.cfg.DATA.STD)
+                # T H W C -> C T H W.
+                frames = frames.permute(3, 0, 1, 2)
+                # Perform data augmentation.
+                frames = self.spatial_sampling(
+                    frames,
+                    spatial_idx=spatial_sample_index,
+                    min_scale=min_scale,
+                    max_scale=max_scale,
+                    crop_size=crop_size,
+                )
+
+                label = self._labels[index]
+                
+                frames = utils.pack_pathway_output(self.cfg, frames)
+                return frames, label, index, {}
+        else:
+            raise RuntimeError(
+                "Failed to fetch video after {} retries.".format(
+                    self._num_retries
+                )
+            )
 
     def spatial_sampling(
         self,

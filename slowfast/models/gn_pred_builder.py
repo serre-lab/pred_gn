@@ -379,7 +379,7 @@ class GN_R3D(nn.Module):
             stride = 1 if i==0 else 2
                 
             stage_seq = self._make_layer(
-                block, fan_out, n_blocks, shortcut_type, stride=stride)
+                block, fan_out, n_blocks, shortcut_type, stride=stride, norm=feedforward_bn)
 
             name = "res" + str(i + 1)
             self.add_module(name, stage_seq)
@@ -459,10 +459,10 @@ class GN_R3D(nn.Module):
 
             self.final_remap = nn.Sequential(
                 nn.ConvTranspose2d(fan_in,pred_fan,3, stride=2, padding=1, output_padding=1),
-                get_norm(feedforward_bn+'2D', pred_fan),
+                get_norm(feedforward_bn, pred_fan), #+'2D'
                 nn.ReLU(),
                 nn.ConvTranspose2d(pred_fan,pred_fan//2, 3, stride=2, padding=1, output_padding=1),
-                get_norm(feedforward_bn+'2D', pred_fan//2),
+                get_norm(feedforward_bn, pred_fan//2), #+'2D'
                 nn.ReLU(),
                 nn.Conv2d(pred_fan//2, 3, 3, padding=1)
             )
@@ -520,11 +520,11 @@ class GN_R3D(nn.Module):
         layers.append(block(self.inplanes, planes, stride, downsample, norm=norm))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+            layers.append(block(self.inplanes, planes, norm=norm))
 
         return nn.Sequential(*layers)
 
-    def forward(self, inputs_):
+    def forward(self, inputs_, return_frames=False):
         if isinstance(inputs_, list):
             inputs_ = inputs_[0]
         x = inputs_
@@ -539,9 +539,12 @@ class GN_R3D(nn.Module):
         hidden_states= {}
         if self.pred_gn:
             errors = 0
+            if return_frames:
+                frames = []
         if self.cpc_gn:
             cpc_targets = []
             cpc_preds = {step: [] for step in self.cpc_steps}
+        
         output = {}
 
         if self.hidden_init=='learned':
@@ -638,7 +641,10 @@ class GN_R3D(nn.Module):
                 
                 ## change architecture to take different locations into account
                 if self.pred_gn:
-                    pred_error = F.smooth_l1_loss(self.final_remap(x), inputs_[:,:,i+1]) # conv_input[:,:,1][:,:,None].detach()
+                    frame = self.final_remap(x)
+                    if return_frames:
+                        frames.append(frame)
+                    pred_error = F.smooth_l1_loss(frame, inputs_[:,:,i+1]) # conv_input[:,:,1][:,:,None].detach()
                     errors = errors + pred_error
 
                 conv_input = conv_input[:,:,1:]
@@ -650,6 +656,9 @@ class GN_R3D(nn.Module):
         # del x
         if self.pred_gn:
             output['pred_errors'] = errors
+            if return_frames:
+                frames = torch.stack(frames, 2)
+                output['frames'] = frames
 
         if self.cpc_gn:
             # calculate CPC
@@ -686,23 +695,79 @@ class GN_R3D(nn.Module):
         return x
             
 
-# @MODEL_REGISTRY.register()
-class GN_R3D_CPC(GN_R3D):
+# differentiable warping + feature transformation
+class SpatialTransformer(nn.Module):
+    def __init__(self, fan_in):
+        super(SpatialTransformer, self).__init__()
+
+        # Spatial transformer localization-network
+
+        self.localization = nn.Sequential(
+            nn.Conv2d(fan_in, 64, kernel_size=5),
+            #nn.MaxPool2d(2, stride=2),
+            nn.ReLU(True),
+            nn.Conv2d(64, 32, kernel_size=3),
+        )
+
+        # Regressor for the 3 * 2 affine matrix
+        self.fc_loc = nn.Sequential(
+            nn.Linear(32, 32),
+            nn.ReLU(True),
+            nn.Linear(32, 3 * 2)
+        )
+
+        # Initialize the weights/bias with identity transformation
+        self.fc_loc[2].weight.data.zero_()
+        self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+
+    # Spatial transformer network forward function
+    def forward(self, x, input_trans=None):
+        if input_trans == None:
+            input_trans = x 
+        xs = self.localization(x)
+        xs = F.relu(F.max_pool2d(xs, kernel_size=xs.size()[2:]))
+
+        xs = xs.view(-1, xs.shape[1])
+        theta = self.fc_loc(xs)
+        theta = theta.view(-1, 2, 3)
+
+        grid = F.affine_grid(theta, input_trans.size(), align_corners=True)
+        x = F.grid_sample(input_trans, grid, align_corners=True)
+
+        return x
+
+
+@MODEL_REGISTRY.register()
+class GN_R3D_VPN(GN_R3D):
     
     def __init__(self, cfg):
-        super(GN_R3D_CPC, self).__init__(cfg)
+        super(GN_R3D_VPN, self).__init__(cfg)
 
-        cpc_fan_out = cfg.PREDICTIVE.CPC_FAN_OUT
-        self.cpc_steps = cfg.PREDICTIVE.CPC_STEPS # [2,4,8]
-        cpc_fan_in = self._out_feature_channels[self.h_units[-1][0]] 
-        self.cpc_fan_out = cpc_fan_out
+        # for all topdown layers 
+        # self.spatial_transforms = nn.ModuleDict({})
+        # self.feature_transforms = nn.ModuleDict({})
+        # for _, td_name in self.td_units_and_names:
+            
+        #     loc = int(td_name.strip('topdown'))
+        #     h_name = 'horizontal'+str(loc)
 
-        self.W_cpc_target = nn.Linear(cpc_fan_in, cpc_fan_out, bias=False)
-        self.W_cpc_preds = {}
+        #     self.spatial_transforms[td_name] = SpatialTransformer(fan_in=self._out_feature_channels[h_name])
+        #     self.feature_transforms[td_name] = nn.Conv2d(self._out_feature_channels[h_name], kernel_size=1)
+        
+        # or just the last one
+        
+        fan_in = self._out_feature_channels[self.h_units[-1][0]] 
+        # self.spatial_transform = SpatialTransformer(fan_in=fan_in)
+        # self.feature_transform = nn.Conv2d(fan_in, kernel_size=1)
+        self.spatial_transforms = {}
+        self.feature_transforms = {}
         for step in self.cpc_steps:
-            w = nn.Linear(cpc_fan_in, cpc_fan_out, bias=False)
-            self.add_module('W_cpc_preds_%d'%step, w)
-            self.W_cpc_preds[step] = w
+            ws = SpatialTransformer(fan_in=fan_in)
+            wf = nn.Conv2d(fan_in, fan_in, kernel_size=1)
+            self.add_module('spatial_transform_%d'%step, ws)
+            self.add_module('feature_transform_%d'%step, wf)
+            self.spatial_transforms[step] = ws
+            self.feature_transforms[step] = wf
 
     def forward(self, inputs_):
         if isinstance(inputs_, list):
@@ -717,8 +782,13 @@ class GN_R3D_CPC(GN_R3D):
         current_loc = self.h_units[0][0]
         
         hidden_states= {}
-        errors = 0
-        
+        if self.pred_gn:
+            errors = 0
+        if self.cpc_gn:
+            cpc_targets = []
+            cpc_preds = {step: [] for step in self.cpc_steps}
+        output = {}
+
         if self.hidden_init=='learned':
             # h_unit, h_name =  self.h_units_and_names[-1]
             # # x = torch.zeros_like(conv_input[:,:,0])[:,:,None]
@@ -743,7 +813,7 @@ class GN_R3D_CPC(GN_R3D):
                 
                 hidden_states[h_name] = F.softplus(torch.zeros_like(x))
                 
-                hidden_states[h_name] = h_unit(x, hidden_states[h_name], timestep=0) # F.softplus(x)
+                hidden_states[h_name] = h_unit(F.softplus(x), hidden_states[h_name], timestep=0)
                 
                 x = hidden_states[h_name]
 
@@ -766,8 +836,7 @@ class GN_R3D_CPC(GN_R3D):
                 hidden_states[h_name] = td_unit(hidden_states[h_name], x, timestep=0)
                 x = hidden_states[h_name]
         
-        cpc_targets = []
-        cpc_preds = {step: [] for step in self.cpc_steps}
+        
         for i in range(timesteps):
             x = conv_input[:,:,0]
             current_loc = self.h_units[0][0]
@@ -780,7 +849,7 @@ class GN_R3D_CPC(GN_R3D):
                 if i == 0 and h_name not in hidden_states:    
                     hidden_states[h_name] = F.softplus(torch.zeros_like(x))
                 
-                hidden_states[h_name], extra = h_unit(x, hidden_states[h_name], timestep=i, return_extra=['error']) # F.softplus(x)
+                hidden_states[h_name], extra = h_unit(F.softplus(x), hidden_states[h_name], timestep=i, return_extra=['error'])
                 # errors = errors + torch.norm(extra['error'].view(extra['error'].shape[0],-1), p=1, dim=1)/1e4
                 # if i > 0:
                 #     errors = errors + torch.abs(extra['error'].view(extra['error'].shape[0],-1)).mean(-1)
@@ -792,11 +861,15 @@ class GN_R3D_CPC(GN_R3D):
             
                 current_loc = loc
             
-            if i >= min(self.cpc_steps):
-                cpc_targets.append(self.W_cpc_target(x.transpose(1,3).detach()).view([-1,self.cpc_fan_out]))
-            for step in self.cpc_steps:
-                if i < timesteps-step: 
-                    cpc_preds[step].append(self.W_cpc_preds[step](x.transpose(1,3)).view([-1,self.cpc_fan_out]))
+            if self.cpc_gn:
+                if i >= min(self.cpc_steps):
+                    cpc_targets.append(x.detach())
+                    # cpc_targets.append(self.W_cpc_target(x.transpose(1,3).detach()).view([-1,self.cpc_fan_out]))
+                    
+                for step in self.cpc_steps:
+                    if i < timesteps-step: 
+                        cpc_preds[step].append(self.spatial_transforms[step](x, self.feature_transforms[step](x)))
+                        # cpc_preds[step].append(self.W_cpc_preds[step](x.transpose(1,3)).view([-1,self.cpc_fan_out]))
 
             if i <timesteps-1:
                 for j, (td_unit, td_name) in enumerate(self.td_units_and_names):
@@ -812,44 +885,50 @@ class GN_R3D_CPC(GN_R3D):
                 # errors = errors + torch.abs(pred_error.view(pred_error.shape[0],-1)).mean(-1)
                 
                 ## change architecture to take different locations into account
-                pred_error = F.smooth_l1_loss(self.final_remap(x), inputs_[:,:,i+1]) # conv_input[:,:,1][:,:,None].detach()
-                errors = errors + pred_error
+                if self.pred_gn:
+                    pred_error = F.smooth_l1_loss(self.final_remap(x), inputs_[:,:,i+1]) # conv_input[:,:,1][:,:,None].detach()
+                    errors = errors + pred_error
 
                 conv_input = conv_input[:,:,1:]
         
-        output = self.head(hidden_states[self.h_units_and_names[-1][1]][:,:,None].detach()) 
-        
+        logits = self.head(hidden_states[self.h_units_and_names[-1][1]][:,:,None].detach()) 
+        output['logits'] = logits
         # del hidden_states
         # del conv_input
         # del x
-        cpc_loss = 0
-        cpc_targets = torch.stack(cpc_targets,0)
-        for step in self.cpc_steps:
-            if len(cpc_preds[step])>1:
-                cpc_preds[step] = torch.cat(cpc_preds[step], 0)
-    
-                cpc_output = torch.matmul(cpc_targets[step-min(self.cpc_steps):].view([-1, cpc_preds[step].shape[-1]]), cpc_preds[step].t())
+        if self.pred_gn:
+            output['pred_errors'] = errors
 
-                labels = torch.cumsum(torch.ones_like(cpc_preds[step][:,0]).long(), 0) -1
-                cpc_loss = cpc_loss + F.cross_entropy(cpc_output, labels)
-
-
-        # calculate CPC
-        
-        # levels of difficulty
-        # easy : across batches (dim = 0)
-        # medium : across space within sample (fixed dim = 0, dims = 3,4)
-        # hard : across time within sample (fixed dim = 0, fixed dims = 3,4, dim=2) 
-        
-        # output = targets
-        # transpose to B,S,T,C
-
-        # label smoothing -> S,T block diag matrix within B,S block diag matrix
+        if self.cpc_gn:
+            # label smoothing -> S,T block diag matrix within B,S block diag matrix
             
-        # x = self.head(hidden_states[self.h_units_and_names[-1][1]])
-        
-        return {'logits': output, 
-                'cpc_loss': cpc_loss, 
-                'pred_errors': errors}
+            ###
+            # contrastive loss
+            cpc_loss = 0
+            cpc_targets = torch.stack(cpc_targets,-1).transpose(1,4)
+            
+            # .permute(1,0,3,4,2) #T B C H W -> B T H W C
+            for step in self.cpc_steps:
+                if len(cpc_preds[step])>1:
+                    cpc_preds[step] = torch.stack(cpc_preds[step], -1).transpose(1,4)
+                    # .permute(1,0,3,4,2) #T B C H W -> B T H W C
+                    # logger.info(cpc_preds[step].shape)
+                    cpc_preds[step] = cpc_preds[step].reshape([-1,cpc_preds[step].shape[-1]]) # -> N C
+                    # logger.info(cpc_targets[:,step-min(self.cpc_steps):].shape)
+                    cpc_output = torch.matmul(cpc_targets[:,step-min(self.cpc_steps):].reshape([-1, cpc_preds[step].shape[-1]]), cpc_preds[step].t())
 
+                    labels = torch.cumsum(torch.ones_like(cpc_preds[step][:,0]).long(), 0) -1
+                    cpc_loss = cpc_loss + F.cross_entropy(cpc_output, labels)
 
+            ### or
+            # L1 loss
+            # cpc_loss = 0
+            # cpc_targets = torch.stack(cpc_targets,2)
+            # for step in self.cpc_steps:
+            #     if len(cpc_preds[step])>1:
+            #         cpc_preds[step] = torch.stack(cpc_preds[step], 2)
+            #         cpc_loss += F.smooth_l1_loss(cpc_preds[step], cpc_targets[:,:,step-min(self.cpc_steps):])
+
+            output['cpc_loss'] = cpc_loss
+
+        return output

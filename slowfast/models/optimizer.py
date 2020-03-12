@@ -69,7 +69,7 @@ def construct_optimizer(model, cfg):
         )
 
 
-def get_epoch_lr(cur_epoch, cfg):
+def get_epoch_lr(cur_epoch, cur_step, cfg):
     """
     Retrieves the lr for the given epoch (as specified by the lr policy).
     Args:
@@ -77,7 +77,7 @@ def get_epoch_lr(cur_epoch, cfg):
         learning rate, betas, and weight decays.
         cur_epoch (float): the number of epoch of the current training stage.
     """
-    return lr_policy.get_lr_at_epoch(cfg, cur_epoch)
+    return lr_policy.get_lr_at_epoch(cfg, cur_epoch, cur_step)
 
 
 def set_lr(optimizer, new_lr):

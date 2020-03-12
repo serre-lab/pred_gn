@@ -5,6 +5,7 @@ import math
 import numpy as np
 import torch
 
+import kornia.geometry.transform as kgt
 
 def random_short_side_scale_jitter(images, min_size, max_size, boxes=None):
     """
@@ -390,3 +391,169 @@ def color_normalization(images, mean, stddev):
         out_images[:, idx] = (images[:, idx] - mean[idx]) / stddev[idx]
 
     return out_images
+
+def random_gamma(var, images):
+    # gamma should be around 2.2 a good range is [1.5, 3.0]
+    gamma  = (np.random.uniform()*1.5 + 3.0)
+    images = torch.pow(images, 2.2/gamma)
+
+    return images
+
+def illumination(var, images):
+
+    aug = np.random.uniform(1-var,1+var,3)
+    aug = aug/np.linalg.norm(aug)
+    illum = aug
+
+    # gamma  = (np.random.uniform()*1.5 + 1.5)
+    # images = torch.pow(images, 2.2) * torch.Tensor(illum)[None,:,None,None]
+    # images = torch.pow(images, 1.0/2.2)
+    
+    images = images* torch.Tensor(illum)[None,:,None,None]
+
+    images = torch.clamp(images / images.max(), 0, 1)
+    
+    return images
+
+def random_color_augmentation(images, img_brightness=0, img_contrast=0, img_saturation=0, img_illumination=0):
+    """
+    Perfrom a color jittering on the input images. The channels of images
+    should be in order RGB.
+    Args:
+        images (tensor): images to perform color jitter. Dimension is
+            `num frames` x `channel` x `height` x `width`.
+        img_brightness (float): jitter ratio for brightness.
+        img_contrast (float): jitter ratio for contrast.
+        img_saturation (float): jitter ratio for saturation.
+    Returns:
+        images (tensor): the jittered images, the dimension is
+            `num frames` x `channel` x `height` x `width`.
+    """
+
+    jitter = []
+    if img_illumination != 0:
+        jitter.append("illumination")
+    if img_brightness != 0:
+        jitter.append("brightness")
+    if img_contrast != 0:
+        jitter.append("contrast")
+    if img_saturation != 0:
+        jitter.append("saturation")
+
+    if len(jitter) > 0:
+        chance = np.random.choice(2,len(jitter))
+        order = np.random.permutation(np.arange(len(jitter)))
+        for idx in range(0, len(jitter)):
+            if jitter[order[idx]] == "brightness" and chance[idx]!=0:
+                images = brightness_jitter_(img_brightness, images)
+            elif jitter[order[idx]] == "contrast" and chance[idx]!=0:
+                images = contrast_jitter_(img_contrast, images)
+            elif jitter[order[idx]] == "saturation" and chance[idx]!=0:
+                images = saturation_jitter_(img_saturation, images)
+            elif jitter[order[idx]] == "illumination" and chance[idx]!=0:
+                images = illumination(img_illumination, images)
+
+        images = torch.clamp(images, 0, 1)
+    return images
+
+def grayscale_(images):
+    """
+    Get the grayscale for the input images. The channels of images should be
+    in order RGB.
+    Args:
+        images (tensor): the input images for getting grayscale. Dimension is
+            `num frames` x `channel` x `height` x `width`.
+    Returns:
+        img_gray (tensor): blended images, the dimension is
+            `num frames` x `channel` x `height` x `width`.
+    """
+    # R -> 0.299, G -> 0.587, B -> 0.114.
+    img_gray = images.clone()
+    gray_channel = (
+        0.299 * images[:, 0] + 0.587 * images[:, 1] + 0.114 * images[:, 2]
+    )
+    img_gray[:, 0] = gray_channel
+    img_gray[:, 1] = gray_channel
+    img_gray[:, 2] = gray_channel
+    return img_gray
+
+def brightness_jitter_(var, images):
+    """
+    Perfrom brightness jittering on the input images. The channels of images
+    should be in order RGB.
+    Args:
+        var (float): jitter ratio for brightness.
+        images (tensor): images to perform color jitter. Dimension is
+            `num frames` x `channel` x `height` x `width`.
+    Returns:
+        images (tensor): the jittered images, the dimension is
+            `num frames` x `channel` x `height` x `width`.
+    """
+    alpha = 1.0 + np.random.uniform(-var, var)
+
+    img_bright = torch.zeros(images.shape)
+    images = blend(images, img_bright, alpha)
+    return images
+
+
+def contrast_jitter_(var, images):
+    """
+    Perfrom contrast jittering on the input images. The channels of images
+    should be in order RGB.
+    Args:
+        var (float): jitter ratio for contrast.
+        images (tensor): images to perform color jitter. Dimension is
+            `num frames` x `channel` x `height` x `width`.
+    Returns:
+        images (tensor): the jittered images, the dimension is
+            `num frames` x `channel` x `height` x `width`.
+    """
+    alpha = 1.0 + np.random.uniform(-var, var)
+
+    img_gray = grayscale_(images)
+    img_gray[:] = torch.mean(img_gray, dim=(1, 2, 3), keepdim=True)
+    images = blend(images, img_gray, alpha)
+    return images
+
+
+def saturation_jitter_(var, images):
+    """
+    Perfrom saturation jittering on the input images. The channels of images
+    should be in order RGB.
+    Args:
+        var (float): jitter ratio for saturation.
+        images (tensor): images to perform color jitter. Dimension is
+            `num frames` x `channel` x `height` x `width`.
+    Returns:
+        images (tensor): the jittered images, the dimension is
+            `num frames` x `channel` x `height` x `width`.
+    """
+    alpha = 1.0 + np.random.uniform(-var, var)
+    img_gray = grayscale_(images)
+    images = blend(images, img_gray, alpha)
+
+    return images
+
+
+def random_spatial_augmentation(images, rotate=0, shear=0):
+    jitter = []
+    if shear != 0:
+        jitter.append("shear")
+    if rotate != 0:
+        jitter.append("rotate")
+    
+    
+    if len(jitter) > 0:
+        chance = np.random.choice(2,len(jitter))
+        order = np.random.permutation(np.arange(len(jitter)))
+        for idx in range(0, len(jitter)):
+            if jitter[order[idx]] == "rotate" and chance[idx]!=0:
+                angle = np.random.uniform(-rotate, rotate)
+                images = kgt.rotate(images, angle=torch.ones(images.shape[0])*angle , center=torch.ones(images.shape[0],2)*torch.Tensor([images.shape[2]//2, images.shape[3]//2]))
+
+            elif jitter[order[idx]] == "shear" and chance[idx]!=0:
+                #torch.Tensor([np.random.uniform(-shear,shear), np.random.uniform(-shear,shear)]) 
+                shear_xy = np.ones([images.shape[0],2]) * np.random.uniform(0,shear,[1,2])
+                images = kgt.shear(images, torch.Tensor(shear_xy))
+                
+    return images

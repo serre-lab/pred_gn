@@ -7,6 +7,7 @@ import numpy as np
 import pprint
 import torch
 
+import sys
 from torch.utils.tensorboard import SummaryWriter
 
 from fvcore.nn.precise_bn import get_bn_modules, update_bn_stats
@@ -52,8 +53,22 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
         if isinstance(inputs, (list,)):
             for i in range(len(inputs)):
                 inputs[i] = inputs[i].cuda(non_blocking=True)
+                #torch.cat(labels)
+                    
         else:
             inputs = inputs.cuda(non_blocking=True)
+        # logger.info(inputs[0].shape)
+        # sys.stdout.flush()
+        for i in range(len(inputs)):
+            if len(inputs[i].shape) > 5:
+                
+                inputs[i] = inputs[i].view((-1,)+inputs[i].shape[2:])
+                labels = torch.repeat_interleave(labels,inputs[i].size(0),0)
+            # labels = labels.view([-1]).long()
+            
+        # logger.info(labels)
+        # logger.info(inputs[0].shape)
+
         labels = labels.cuda()
         for key, val in meta.items():
             if isinstance(val, (list,)):
@@ -63,7 +78,7 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 meta[key] = val.cuda(non_blocking=True)
 
         # Update the learning rate.
-        lr = optim.get_epoch_lr(cur_epoch + float(cur_iter) / data_size, cfg)
+        lr = optim.get_epoch_lr(cur_epoch + float(cur_iter) / data_size, global_iters, cfg)
         optim.set_lr(optimizer, lr)
 
         if cfg.DETECTION.ENABLE:
@@ -73,6 +88,7 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
         else:
             # Perform the forward pass.
             preds = model(inputs)
+        
 
         if cfg.PREDICTIVE.ENABLE:
             errors = preds['pred_errors']
@@ -83,22 +99,29 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
         if isinstance(preds, dict):
             preds = preds['logits']
 
-        
         total_loss = 0
         if cfg.PREDICTIVE.ENABLE:
             pred_loss = errors.mean()
             total_loss += pred_loss
         if cfg.PREDICTIVE.CPC:
             total_loss += cpc_loss
-
+        # logger.info(pred_loss)
+        # logger.info(cpc_loss)
+        # logger.info(total_loss)
+        
+        # logger.info(preds)
+        
         if cfg.MODEL.LOSS_FUNC != '':
             # Explicitly declare reduction to mean.
             loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
 
             # Compute the loss.
             loss = loss_fun(preds, labels)
+            
+            # logger.info(loss)
             total_loss += loss
 
+        
         # check Nan Loss.
         misc.check_nan_losses(total_loss)
 

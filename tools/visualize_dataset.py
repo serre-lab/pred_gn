@@ -1,22 +1,24 @@
-#!/usr/bin/env python3
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-
-"""Wrapper to train and test a video classification model."""
 
 import argparse
 import sys
 import torch
 
-sys.stdout.flush()
-
-
 import slowfast.utils.checkpoint as cu
 import slowfast.utils.multiprocessing as mpu
 from slowfast.config.defaults import get_cfg
 
-from test_net import test
-from train_net import train
+import numpy as np
+import torch
 
+from slowfast.datasets import loader
+from slowfast.datasets.build import build_dataset
+import slowfast.utils.logging as logging
+
+from PIL import Image
+
+import os
+
+logger = logging.get_logger(__name__)
 
 def parse_args():
     """
@@ -71,7 +73,6 @@ def parse_args():
         parser.print_help()
     return parser.parse_args()
 
-
 def load_config(args):
     """
     Given the arguemnts, load and initialize the configs.
@@ -97,9 +98,68 @@ def load_config(args):
     if hasattr(args, "output_dir"):
         cfg.OUTPUT_DIR = args.output_dir
 
-    # Create the checkpoint dir.
     cu.make_checkpoint_dir(cfg.OUTPUT_DIR)
     return cfg
+
+
+def visualize(cfg):
+    """
+    Train a video model for many epochs on train set and evaluate it on val set.
+    Args:
+        cfg (CfgNode): configs. Details can be found in
+            slowfast/config/defaults.py
+    """
+
+    # Setup logging format.
+    logging.setup_logging()
+
+    # Print config.
+    logger.info("Train with config:")
+    # logger.info(pprint.pformat(cfg))
+
+    # # Build the video model and print model statistics.
+    # model = build_model(cfg)
+    # if du.is_master_proc():
+    #     misc.log_model_info(model, cfg, is_train=True)
+
+    # Create the video train and val loaders.
+    # train_loader = loader.construct_loader(cfg, "train")
+    # val_loader = loader.construct_loader(cfg, "val")
+
+    train_set = build_dataset(cfg.TEST.DATASET, cfg, "train")
+
+    for i in range(5):
+        frames, label, _, _ = train_set.get_augmented_examples(i)
+        frames = frames[0].permute(0,2,3,4,1)
+        logger.info('### Z score ##########')
+        logger.info('min')
+        logger.info(frames.min())
+        logger.info('max')
+        logger.info(frames.max())
+        logger.info('mean')
+        logger.info(frames.mean())
+        logger.info('var')
+        logger.info(frames.var())
+        
+        frames = frames * torch.tensor(cfg.DATA.STD)#[None,:,None,None,None]
+        frames = frames + torch.tensor(cfg.DATA.MEAN)#[None,:,None,None,None]
+
+        logger.info('### normal ##########')
+        logger.info('min')
+        logger.info(frames.min())
+        logger.info('max')
+        logger.info(frames.max())
+        logger.info('mean')
+        logger.info(frames.mean())
+        logger.info('var')
+        logger.info(frames.var())
+        
+        for a in range(frames.size(0)):
+            for s in range(frames.size(1)):
+                
+                im = Image.fromarray((frames[a,s].data.numpy()*255).astype(np.uint8))
+                im.save(os.path.join(cfg.OUTPUT_DIR,'example_%d_aug%d_frame_%d.png'%(i,a,s)))
+
 
 
 def main():
@@ -109,45 +169,7 @@ def main():
     args = parse_args()
     cfg = load_config(args)
 
-    # Perform training.
-    if cfg.TRAIN.ENABLE:
-        if cfg.NUM_GPUS > 1:
-            torch.multiprocessing.spawn(
-                mpu.run,
-                nprocs=cfg.NUM_GPUS,
-                args=(
-                    cfg.NUM_GPUS,
-                    train,
-                    args.init_method,
-                    cfg.SHARD_ID,
-                    cfg.NUM_SHARDS,
-                    cfg.DIST_BACKEND,
-                    cfg,
-                ),
-                daemon=False,
-            )
-        else:
-            train(cfg=cfg)
-
-    # Perform multi-clip testing.
-    if cfg.TEST.ENABLE:
-        if cfg.NUM_GPUS > 1:
-            torch.multiprocessing.spawn(
-                mpu.run,
-                nprocs=cfg.NUM_GPUS,
-                args=(
-                    cfg.NUM_GPUS,
-                    test,
-                    args.init_method,
-                    cfg.SHARD_ID,
-                    cfg.NUM_SHARDS,
-                    cfg.DIST_BACKEND,
-                    cfg,
-                ),
-                daemon=False,
-            )
-        else:
-            test(cfg=cfg)
+    visualize(cfg=cfg)
 
 
 if __name__ == "__main__":

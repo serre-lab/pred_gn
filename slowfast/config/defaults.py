@@ -280,6 +280,14 @@ _C.DATA.TRAIN_CROP_SIZE = 224
 # The spatial crop size for testing.
 _C.DATA.TEST_CROP_SIZE = 256
 
+####### Only available for Moments of Time 
+#
+# Adding different augmentations of the same video in one batch
+_C.DATA.NUM_REPEATED_SAMPLES = 1
+#
+# 
+_C.DATA.COLOR_AUGMENTATION = False
+#######
 
 # ---------------------------------------------------------------------------- #
 # Optimizer options
@@ -324,6 +332,9 @@ _C.SOLVER.WARMUP_FACTOR = 0.1
 
 # Gradually warm up the SOLVER.BASE_LR over this number of epochs.
 _C.SOLVER.WARMUP_EPOCHS = 0
+
+# Replaces WARMUP_EPOCHS if not None
+_C.SOLVER.WARMUP_STEPS = 0
 
 # The start learning rate of the warm up.
 _C.SOLVER.WARMUP_START_LR = 0.01

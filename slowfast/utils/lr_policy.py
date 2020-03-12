@@ -6,7 +6,7 @@
 import math
 
 
-def get_lr_at_epoch(cfg, cur_epoch):
+def get_lr_at_epoch(cfg, cur_epoch, cur_step=0):
     """
     Retrieve the learning rate of the current epoch with the option to perform
     warm up in the beginning of the training stage.
@@ -17,13 +17,25 @@ def get_lr_at_epoch(cfg, cur_epoch):
     """
     lr = get_lr_func(cfg.SOLVER.LR_POLICY)(cfg, cur_epoch)
     # Perform warm up.
-    if cur_epoch < cfg.SOLVER.WARMUP_EPOCHS:
-        lr_start = cfg.SOLVER.WARMUP_START_LR
-        lr_end = get_lr_func(cfg.SOLVER.LR_POLICY)(
-            cfg, cfg.SOLVER.WARMUP_EPOCHS
-        )
-        alpha = (lr_end - lr_start) / cfg.SOLVER.WARMUP_EPOCHS
-        lr = cur_epoch * alpha + lr_start
+    if cfg.SOLVER.WARMUP_STEPS != 0:
+        if cur_step < cfg.SOLVER.WARMUP_STEPS:
+            lr_start = cfg.SOLVER.WARMUP_START_LR
+            lr_end = get_lr_func(cfg.SOLVER.LR_POLICY)(
+                cfg, cfg.SOLVER.WARMUP_EPOCHS
+            )
+
+            alpha = (lr_end - lr_start) / cfg.SOLVER.WARMUP_STEPS
+            lr = cur_step * alpha + lr_start
+    else:
+        if cur_epoch < cfg.SOLVER.WARMUP_EPOCHS:
+            lr_start = cfg.SOLVER.WARMUP_START_LR
+            lr_end = get_lr_func(cfg.SOLVER.LR_POLICY)(
+                cfg, cfg.SOLVER.WARMUP_EPOCHS
+            )
+
+            alpha = (lr_end - lr_start) / cfg.SOLVER.WARMUP_EPOCHS
+            lr = cur_epoch * alpha + lr_start
+
     return lr
 
 
@@ -72,6 +84,8 @@ def get_step_index(cfg, cur_epoch):
             break
     return ind - 1
 
+def lr_func_simple(cfg, cur_epoch):
+    return cfg.SOLVER.BASE_LR
 
 def get_lr_func(lr_policy):
     """

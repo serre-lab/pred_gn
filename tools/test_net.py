@@ -11,6 +11,7 @@ import slowfast.utils.distributed as du
 import slowfast.utils.logging as logging
 import slowfast.utils.misc as misc
 from slowfast.datasets import loader
+from slowfast.datasets.build import build_dataset
 from slowfast.models import build_model
 from slowfast.utils.meters import AVAMeter, TestMeter
 
@@ -180,3 +181,101 @@ def test(cfg):
 
     # # Perform multi-view test on the entire dataset.
     perform_test(test_loader, model, test_meter, cfg)
+
+def test_videos(cfg):
+    """
+    Ouputs a reconstruction of 1 video from each class.
+    Args:
+        cfg (CfgNode): configs. Details can be found in
+            slowfast/config/defaults.py
+    """
+    # Set random seed from configs.
+    np.random.seed(cfg.RNG_SEED)
+    torch.manual_seed(cfg.RNG_SEED)
+
+    # Setup logging format.
+    logging.setup_logging()
+
+    # Print config.
+    logger.info("Test with config:")
+    logger.info(cfg)
+
+    assert cfg.PREDICTIVE.ENABLE, "Model doesn't generate frames"
+    # Build the video model and print model statistics.
+    model = build_model(cfg)
+    if du.is_master_proc():
+        misc.log_model_info(model, cfg, is_train=False)
+
+    # Load a checkpoint to test if applicable.
+    if cfg.TEST.CHECKPOINT_FILE_PATH != "":
+        cu.load_checkpoint(
+            cfg.TEST.CHECKPOINT_FILE_PATH,
+            model,
+            cfg.NUM_GPUS > 1,
+            None,
+            inflation=False,
+            convert_from_caffe2=cfg.TEST.CHECKPOINT_TYPE == "caffe2",
+        )
+    elif cu.has_checkpoint(cfg.OUTPUT_DIR):
+        last_checkpoint = cu.get_last_checkpoint(cfg.OUTPUT_DIR)
+        cu.load_checkpoint(last_checkpoint, model, cfg.NUM_GPUS > 1)
+    elif cfg.TRAIN.CHECKPOINT_FILE_PATH != "":
+        # If no checkpoint found in TEST.CHECKPOINT_FILE_PATH or in the current
+        # checkpoint folder, try to load checkpint from
+        # TRAIN.CHECKPOINT_FILE_PATH and test it.
+        cu.load_checkpoint(
+            cfg.TRAIN.CHECKPOINT_FILE_PATH,
+            model,
+            cfg.NUM_GPUS > 1,
+            None,
+            inflation=False,
+            convert_from_caffe2=cfg.TRAIN.CHECKPOINT_TYPE == "caffe2",
+        )
+    else:
+        # raise NotImplementedError("Unknown way to load checkpoint.")
+        logger.info("Testing with random initialization. Only for debugging.")
+
+    # Create video testing loaders.
+    # test_loader = loader.construct_loader(cfg, "test")
+
+    test_set = build_dataset(cfg.TEST.DATASET, cfg, "test")
+    
+    logger.info("Testing model for {} iterations".format(len(test_loader)))
+    
+    # # Perform multi-view test on the entire dataset.
+    # perform_test(test_loader, model, test_meter, cfg)
+
+    # create directory with video for output
+
+    for i in range(cfg.MODEL.NUM_CLASSES):
+        # get video input
+        # get model prediction    
+        # output frames or GIF of video+pred side by side + cpc_loss + predictive loss
+        ## needs function
+        frames, label, index, _ = test_set.get_example_by_class(i)
+        
+        
+        input_frames = frames.cuda(non_blocking=True)
+        labels = labels.cuda()
+
+        preds = model(input_frames[None,:], return_frames=True)
+        
+        class_name = test_set._classes[i]
+        loss_pred
+        loss_cpc
+
+        if cfg.PREDICTIVE.ENABLE:
+            errors = preds['pred_errors']
+
+        if cfg.PREDICTIVE.CPC:
+            cpc_loss = preds['cpc_loss']
+            
+        preds = preds['frames']
+
+
+        frames = frames.permute(0,2,3,4,1)
+        preds = preds.permute(0,2,3,4,1)
+        images = [Image.fromarray(image.astype(np.uint8), 'RGB') for image in images]
+        images[0].save(os.path.join(cfg.OUTPUT_DIR,'%s_pred-%f_cpc-%d.gif'%(class_name, loss_pred, loss_cpc)), 
+                save_all=True, append_images=images[1:], optimize=False, duration=40, loop=0)
+        
