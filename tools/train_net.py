@@ -59,13 +59,20 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             inputs = inputs.cuda(non_blocking=True)
         # logger.info(inputs[0].shape)
         # sys.stdout.flush()
+        if len(inputs[i].shape) > 5:
+            # logger.info(inputs[i].shape)
+            
+            labels = torch.repeat_interleave(labels,inputs[i].size(1),0)
+        
         for i in range(len(inputs)):
             if len(inputs[i].shape) > 5:
                 
                 inputs[i] = inputs[i].view((-1,)+inputs[i].shape[2:])
-                labels = torch.repeat_interleave(labels,inputs[i].size(0),0)
+                
             # labels = labels.view([-1]).long()
-            
+        # logger.info(labels.shape)
+        # logger.info(inputs[i].shape)
+        # sys.stdout.flush()
         # logger.info(labels)
         # logger.info(inputs[0].shape)
 
@@ -268,7 +275,7 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
 
             if cfg.MODEL.LOSS_FUNC != '':
                 loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
-
+                
                 # Compute the loss.
                 loss = loss_fun(preds, labels)
                 # total_loss = total_loss + loss

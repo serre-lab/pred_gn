@@ -225,9 +225,8 @@ class Moments(torch.utils.data.Dataset):
                             img_brightness=0.4,
                             img_contrast=0.4,
                             img_saturation=0.4,
-                            img_illumination=0
+                            img_illumination=0.2
                         )
-                        
                         
                         # T C H W -> C T H W.
                         sample_frames = sample_frames.permute(1, 0, 2, 3)
@@ -247,8 +246,6 @@ class Moments(torch.utils.data.Dataset):
                         max_scale=max_scale,
                         crop_size=crop_size,
                     )
-                    
-                    sample_frames = transform.random_spatial_augmentation(sample_frames.permute(1,0,2,3), rotate=40, shear=0.3).permute(1,0,2,3)
 
                     # out_frames.append(sample_frames)
                     out_frames.append(utils.pack_pathway_output(self.cfg, sample_frames))
@@ -391,8 +388,6 @@ class Moments(torch.utils.data.Dataset):
                             img_illumination=0.4
                         )
 
-                        sample_frames = transform.random_spatial_augmentation(sample_frames, rotate=40, shear=0.3)
-
                         # T C H W -> C T H W.
                         sample_frames = sample_frames.permute(1, 0, 2, 3)
 
@@ -478,6 +473,8 @@ class Moments(torch.utils.data.Dataset):
             frames, _ = transform.random_short_side_scale_jitter(
                 frames, min_scale, max_scale
             )
+            
+            frames = transform.random_spatial_augmentation(frames, rotate=40, shear=0.3)
             frames, _ = transform.random_crop(frames, crop_size)
             frames, _ = transform.horizontal_flip(0.5, frames)
         else:

@@ -29,7 +29,7 @@ BN:
 SOLVER:
   BASE_LR: 1e-4 #5e-3 # 2e-4
   # LR_POLICY: simple
-  # MAX_EPOCH: 196
+  MAX_EPOCH:  20
   # MOMENTUM: 0.9
   WEIGHT_DECAY: 1e-6 #1e-5
   WARMUP_EPOCHS: 2
@@ -40,7 +40,7 @@ SOLVER:
 MODEL:
   NUM_CLASSES: 339
   ARCH: resnet18
-  MODEL_NAME: GN_R3D_VPN
+  MODEL_NAME: GN_R2D_VPN
   LOSS_FUNC: cross_entropy # cross_entropy
   DROPOUT_RATE: 0.5
 GN:

@@ -27,7 +27,7 @@ BN:
 SOLVER:
   BASE_LR: 1e-3
   # LR_POLICY: cosine
-  # MAX_EPOCH: 196
+  MAX_EPOCH: 20
   # MOMENTUM: 0.9
   WEIGHT_DECAY: 1e-5
   # WARMUP_EPOCHS: 34
@@ -36,7 +36,7 @@ SOLVER:
 MODEL:
   NUM_CLASSES: 339
   ARCH: resnet18
-  MODEL_NAME: GN_R3D
+  MODEL_NAME: GN_R2D
   LOSS_FUNC: cross_entropy # cross_entropy
   DROPOUT_RATE: 0.5
 GN:
