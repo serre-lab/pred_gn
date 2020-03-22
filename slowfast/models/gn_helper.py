@@ -14,6 +14,10 @@ from torch import nn
 
 from .batch_norm import get_norm
 
+import slowfast.utils.logging as logging
+
+logger = logging.get_logger(__name__)
+
 __all__ = [
     "TemporalCausalConv3d",
     "BasicBlock",
@@ -59,6 +63,45 @@ class TemporalCausalConv3d(nn.Conv3d):
         return super().forward(x)
 
 class BasicStem(nn.Module):
+    def __init__(self, in_channels=3, out_channels=64, stride=2, pooling=3, norm="BN"):
+        """
+        Args:
+            norm (str or callable): a callable that takes the number of
+                channels and return a `nn.Module`, or a pre-defined string
+                (one of {"FrozenBN", "BN", "GN"}).
+        """
+        super().__init__()
+        #TemporalCausalConv3d
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=7,
+            stride=2,
+            padding=3,
+            bias=False)
+            
+        self.bn1 = get_norm(norm, out_channels) # nn.BatchNorm3d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=pooling, stride=2, padding=1)
+
+    def forward(self, x):
+        
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        
+        return x
+
+    @property
+    def out_channels(self):
+        return self.conv1.out_channels
+
+    @property
+    def stride(self):
+        return 4  # = stride 2 conv -> stride 2 max pool
+
+class BasicStem3d(nn.Module):
     def __init__(self, in_channels=3, out_channels=64, stride=(1, 2, 2), pooling=(1, 3, 3), norm="BN"):
         """
         Args:
@@ -68,6 +111,7 @@ class BasicStem(nn.Module):
         """
         super().__init__()
         #TemporalCausalConv3d
+        
         self.conv1 = nn.Conv3d(
             in_channels,
             out_channels,
@@ -75,9 +119,10 @@ class BasicStem(nn.Module):
             stride=(1, 2, 2),
             padding=(0, 3, 3),
             bias=False)
-            
+
         self.bn1 = get_norm(norm, out_channels) # nn.BatchNorm3d(out_channels)
         self.relu = nn.ReLU(inplace=True)
+
         self.maxpool = nn.MaxPool3d(kernel_size=pooling, stride=(1,2,2), padding=(0,1,1))
 
     def forward(self, x):
@@ -134,7 +179,7 @@ class ResNetSimpleHead(nn.Module):
         """
         super(ResNetSimpleHead, self).__init__()
 
-        self.avgpool = nn.AdaptiveAvgPool3d((1,1,1))
+        self.avgpool = nn.AdaptiveAvgPool2d((1,1))
 
         if dropout_rate > 0.0:
             self.dropout = nn.Dropout(dropout_rate)
@@ -142,6 +187,9 @@ class ResNetSimpleHead(nn.Module):
         # initialized with a different std comparing to convolutional layers.
         # self.avg_pool
         self.fc = nn.Linear(input_fan, num_classes, bias=True)
+
+        nn.init.kaiming_normal_(self.fc.weight, mode='fan_out')
+        self.fc.bias.data.zero_()
 
         # Softmax for evaluation and testing.
         if act_func == "softmax":
@@ -182,8 +230,18 @@ def conv1x3x3(in_planes, out_planes, stride=1):
         padding=(0,1,1),
         bias=False)
 
-
 def downsample_basic_block(x, planes, stride):
+    out = F.avg_pool2d(x, kernel_size=1, stride=stride)
+    zero_pads = torch.Tensor(
+        out.size(0), planes - out.size(1), out.size(2), out.size(3)).zero_()
+    if isinstance(out.data, torch.cuda.FloatTensor):
+        zero_pads = zero_pads.cuda()
+
+    out = torch.autograd.Variable(torch.cat([out.data, zero_pads], dim=1))
+
+    return out
+
+def downsample_basic_block3d(x, planes, stride):
     out = F.avg_pool3d(x, kernel_size=1, stride=stride)
     zero_pads = torch.Tensor(
         out.size(0), planes - out.size(1), out.size(2), out.size(3),
@@ -197,6 +255,39 @@ def downsample_basic_block(x, planes, stride):
 
 
 class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None, norm="BN"):
+        super(BasicBlock, self).__init__()
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = get_norm(norm, planes) # nn.BatchNorm3d(planes)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = get_norm(norm, planes) # nn.BatchNorm3d(planes)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(x)
+
+        # logger.info(residual.shape)
+        # logger.info(out.shape)
+        out += residual
+        out = self.relu(out)
+
+        return out
+
+class BasicBlock3D(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, norm="BN"):
@@ -229,6 +320,44 @@ class BasicBlock(nn.Module):
 
 
 class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None, norm="BN"):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
+        self.bn1 = get_norm(norm, planes) # nn.BatchNorm3d(planes)
+        self.conv2 = nn.Conv2d(
+            planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn2 = get_norm(norm, planes) # nn.BatchNorm3d(planes)
+        self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
+        self.bn3 = get_norm(norm, planes * 4) # nn.BatchNorm3d(planes * 4)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(x)
+
+        out += residual
+        out = self.relu(out)
+
+        return out
+
+class Bottleneck3D(nn.Module):
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, norm="BN"):

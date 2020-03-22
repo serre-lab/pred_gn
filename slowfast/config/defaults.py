@@ -366,8 +366,13 @@ _C.RNG_SEED = 1
 # Log period in iters.
 _C.LOG_PERIOD = 10
 
+# summary writer period
+_C.SUMMARY_PERIOD = 100
+
 # Distributed backend.
 _C.DIST_BACKEND = "nccl"
+
+
 
 
 # ---------------------------------------------------------------------------- #

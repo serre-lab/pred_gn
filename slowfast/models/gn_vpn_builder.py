@@ -217,16 +217,16 @@ class GN_R2D_VPN(nn.Module):
             self.spatial_transforms[step] = ws
             self.feature_transforms[step] = wf
 
-
         self._out_features = fan_in
 
         # change init when you add a new layer
 
         for name, m in self.named_modules():
             if 'horizontal' not in name and 'topdown' not in name:
-                if isinstance(m, nn.Conv3d): 
+                if isinstance(m, (nn.Conv3d,nn.Conv2d, nn.ConvTranspose2d)): 
                     # nn.init.kaiming_normal(m.weight, mode='fan_out')
                     nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    m.bias.data.zero_()
                 elif isinstance(m, (nn.BatchNorm3d, nn.BatchNorm2d)): # , nn.GroupNorm 
                     m.weight.data.fill_(1)
                     m.bias.data.zero_()
@@ -346,9 +346,11 @@ class GN_R2D_VPN(nn.Module):
                 
                 x = hidden_states[h_name]
 
+                if (x>10000).any():
+                    logger.info('variable %s at timestep %d out of bound'%(h_name,i))
                 x = self.horizontal_norms[h_name](x)
                 x = F.relu_(x)
-            
+                
                 current_loc = loc
 
             if self.cpc_gn:
@@ -366,6 +368,8 @@ class GN_R2D_VPN(nn.Module):
                     
                     hidden_states[h_name] = td_unit(hidden_states[h_name], x, timestep=i)
                     x = hidden_states[h_name]
+                    if (x>10000).any():
+                        logger.info('variable %s at timestep %d out of bound'%(td_name,i))
 
                 # prediction error -> next step lower layer is detached to avoid gradients flowing through lower layers
                 # pred_error = F.interpolate(x, conv_input.shape[2:], mode='trilinear', align_corners=True)

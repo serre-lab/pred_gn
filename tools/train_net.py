@@ -3,9 +3,14 @@
 
 """Train a video classification model."""
 
+import os
+
+
 import numpy as np
 import pprint
 import torch
+
+import torchvision as tv
 
 import sys
 from torch.utils.tensorboard import SummaryWriter
@@ -22,6 +27,9 @@ import slowfast.utils.misc as misc
 from slowfast.datasets import loader
 from slowfast.models import build_model
 from slowfast.utils.meters import AVAMeter, TrainMeter, ValMeter
+
+from PIL import Image
+
 
 logger = logging.get_logger(__name__)
 
@@ -136,6 +144,10 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
         optimizer.zero_grad()
         total_loss.backward()
         # Update the parameters.
+
+        # for p_name, p in model.named_parameters():
+        #     if p.requires_grad:
+        #         p.grad.cpu().data.numpy()
         optimizer.step()
 
         if cfg.DETECTION.ENABLE:
@@ -194,7 +206,32 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 writer.add_scalar('loss/top1_err', train_meter.mb_top1_err.get_win_median(), global_iters)
                 writer.add_scalar('loss/top5_err', train_meter.mb_top5_err.get_win_median(), global_iters)
                 writer.add_scalar('loss/loss', train_meter.loss.get_win_median(), global_iters)
+            if global_iters%cfg.SUMMARY_PERIOD==0:
+                with torch.no_grad():
+                    logger.info(inputs[i].shape)
+                    sys.stdout.flush()
+                    inputs[0] = inputs[0][:min(3,len(inputs[0]))] 
+                    frames = model(inputs, return_frames=True)['frames']
+                    inputs = inputs[0].transpose(1,2)[:,1::2][:, -8:]
+                    frames = frames.transpose(1,2)[:,1::2][:, -8:]
 
+                    inputs = inputs*inputs.new(cfg.DATA.STD)[None,None,:,None,None]+inputs.new(cfg.DATA.MEAN)[None,None,:,None,None]
+                    frames = frames*frames.new(cfg.DATA.STD)[None,None,:,None,None]+frames.new(cfg.DATA.MEAN)[None,None,:,None,None]
+                    images = torch.cat([inputs, frames], 1).view((-1,) + inputs.shape[2:]) 
+                
+                npimg = tv.utils.make_grid(images, nrow=8, normalize=True)
+                logger.info(npimg.shape)
+                npimg = npimg.cpu().data.numpy().transpose((1,2,0)).astype(np.uint8())
+                im = Image.fromarray(npimg)
+                im.save(os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters))
+
+                del images
+                
+                # grid = tv.utils.make_grid(images, nrow=8, normalize=True)
+                # writer.add_image('predictions', images, global_iters)
+                
+                # tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters), nrow=8, normalize=True)
+                
         train_meter.log_iter_stats(cur_epoch, cur_iter)
         train_meter.iter_tic()
 

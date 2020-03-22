@@ -138,7 +138,7 @@ def get_norm(norm, out_channels):
             "SyncBN": NaiveSyncBatchNorm3d,
             "SyncBN2D": NaiveSyncBatchNorm2d,
             "FrozenBN": FrozenBatchNorm2d,
-            "GN": lambda channels: nn.GroupNorm(channels//4, channels),
+            "GN": lambda channels: nn.GroupNorm(32, channels),
             "nnSyncBN": nn.SyncBatchNorm,  # keep for debugging
         }[norm]
     return norm(out_channels)
