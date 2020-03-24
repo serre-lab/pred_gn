@@ -584,7 +584,9 @@ class tdConvGRUCell(nn.Module):
             timesteps=1,
             init=nn.init.orthogonal_,
             grad_method='bptt',
-            norm='SyncBN'):
+            norm='SyncBN',
+            spatial_transform=False,
+            gn_remap=False):
         super(tdConvGRUCell, self).__init__()
 
         self.padding = kernel_size // 2
@@ -594,8 +596,17 @@ class tdConvGRUCell(nn.Module):
         self.batchnorm = batchnorm
         self.grad_method = grad_method
         self.gala = gala
+        self.gn_remap = gn_remap
+
         self.remap_0 = nn.Conv2d(td_fan_in, diff_fan_in, 1)
         self.remap_1 = nn.Conv2d(diff_fan_in, fan_in, 1)
+        if self.gn_remap:
+            self.gn_remap0 = get_norm(norm, diff_fan_in)
+            self.gn_remap1 = get_norm(norm, fan_in)
+        
+        self.spatial_transform = spatial_transform
+        if self.spatial_transform:
+            self.warp = SpatialTransformer(fan_in)
 
         self.u1_gate = nn.Conv2d(fan_in, fan_in, 1)
         self.u2_gate = nn.Conv2d(fan_in, fan_in, 1)
@@ -645,8 +656,12 @@ class tdConvGRUCell(nn.Module):
             size = lower_.shape[2:],
             #scale_factor=2,
             mode="nearest")
-        prev_state2 = F.softplus(self.remap_0(prev_state2))
-        prev_state2 = F.softplus(self.remap_1(prev_state2))
+        if self.gn_remap:
+            prev_state2 = F.softplus(self.gn_remap0(self.remap_0(prev_state2)))
+            prev_state2 = F.softplus(self.gn_remap1(self.remap_1(prev_state2)))
+        else:
+            prev_state2 = F.softplus(self.remap_0(prev_state2))
+            prev_state2 = F.softplus(self.remap_1(prev_state2))
         
         if 'remap' in return_extra:
             extra['remap'] = prev_state2
@@ -675,10 +690,52 @@ class tdConvGRUCell(nn.Module):
                 inhibition + excitation) + self.w * inhibition * excitation)
         op = (1 - g2_t) * lower_ + g2_t * h2_t  # noqa Note: a previous version had higher_ in place of lower_
         
+        if self.spatial_transform:
+            op = self.warp(inhibition, op)
         if extra:
             return op, extra
         else:
             return op
+
+class SpatialTransformer(nn.Module):
+    def __init__(self, fan_in):
+        super(SpatialTransformer, self).__init__()
+
+        # Spatial transformer localization-network
+
+        self.localization = nn.Sequential(
+            nn.Conv2d(fan_in, 64, kernel_size=5),
+            #nn.MaxPool2d(2, stride=2),
+            nn.ReLU(True),
+            nn.Conv2d(64, 32, kernel_size=3),
+        )
+
+        # Regressor for the 3 * 2 affine matrix
+        self.fc_loc = nn.Sequential(
+            nn.Linear(32, 32),
+            nn.ReLU(True),
+            nn.Linear(32, 3 * 2)
+        )
+
+        # Initialize the weights/bias with identity transformation
+        self.fc_loc[2].weight.data.zero_()
+        self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+
+    # Spatial transformer network forward function
+    def forward(self, x, input_trans=None):
+        if input_trans == None:
+            input_trans = x 
+        xs = self.localization(x)
+        xs = F.relu(F.max_pool2d(xs, kernel_size=xs.size()[2:]))
+
+        xs = xs.view(-1, xs.shape[1])
+        theta = self.fc_loc(xs)
+        theta = theta.view(-1, 2, 3)
+
+        grid = F.affine_grid(theta, input_trans.size(), align_corners=True)
+        x = F.grid_sample(input_trans, grid, align_corners=True)
+
+        return x
 
 #########################################################################################################
 #### Unused Cells #######################################################################################

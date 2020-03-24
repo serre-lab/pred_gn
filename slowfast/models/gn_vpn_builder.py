@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from .batch_norm import get_norm
+from .batch_norm import get_norm, GroupNorm
 
 from .rnns import hConvGRUCell, tdConvGRUCell
 
@@ -152,7 +152,7 @@ class GN_R2D_VPN(nn.Module):
             self.h_units_and_names.append((recurrent, horizontal_name))
             horizontal_layers += [[horizontal_name, fan_in]]
 
-            horizonta_norm = get_norm('GN', fan_in)
+            horizonta_norm = get_norm(feedforward_bn, fan_in)
             self.add_module("horizontal_norm{}".format(loc),horizonta_norm)
             self.horizontal_norms[horizontal_name] = horizonta_norm
         
@@ -175,7 +175,9 @@ class GN_R2D_VPN(nn.Module):
                 timesteps=8,
                 init=nn.init.orthogonal_,
                 grad_method=grad_method,
-                norm=recurrent_bn)
+                norm=recurrent_bn,
+                spatial_transform=True,
+                gn_remap=True)
 
             topdown_name = "topdown{}".format(loc)
             self.add_module(topdown_name, recurrent)
@@ -199,9 +201,10 @@ class GN_R2D_VPN(nn.Module):
                 nn.ReLU(),
                 nn.ConvTranspose2d(pred_fan,pred_fan//2, 3, stride=2, padding=1, output_padding=1),
                 get_norm(feedforward_bn, pred_fan//2), #+'2D'
-                nn.ReLU(),
-                nn.Conv2d(pred_fan//2, 3, 3, padding=1)
+                nn.ReLU()
             )
+            self.fb_spatial_transformer = SpatialTransformer(fan_in=fan_in)
+            self.output_conv = nn.Conv2d(pred_fan//2, 3, 3, padding=1)
 
         self.cpc_steps = cfg.PREDICTIVE.CPC_STEPS
         fan_in = self._out_feature_channels[self.h_units[-1][0]] 
@@ -221,15 +224,21 @@ class GN_R2D_VPN(nn.Module):
 
         # change init when you add a new layer
 
+        self.group_norm_layers=[]
+         
         for name, m in self.named_modules():
             if 'horizontal' not in name and 'topdown' not in name:
                 if isinstance(m, (nn.Conv3d,nn.Conv2d, nn.ConvTranspose2d)): 
                     # nn.init.kaiming_normal(m.weight, mode='fan_out')
                     nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                    m.bias.data.zero_()
-                elif isinstance(m, (nn.BatchNorm3d, nn.BatchNorm2d)): # , nn.GroupNorm 
+                    if m.bias is not None:
+                        m.bias.data.zero_()
+                elif isinstance(m, (nn.BatchNorm3d, nn.BatchNorm2d, nn.GroupNorm, GroupNorm)): # , nn.GroupNorm 
                     m.weight.data.fill_(1)
-                    m.bias.data.zero_()
+                    if m.bias is not None:
+                        m.bias.data.zero_()
+            if isinstance(m, GroupNorm):
+                self.group_norm_layers.append(m)
 
     def _make_layer(self, block, planes, blocks, shortcut_type, stride=1, norm="BN"):
         downsample = None
@@ -241,12 +250,19 @@ class GN_R2D_VPN(nn.Module):
                     stride=stride)
             else:
                 downsample = nn.Sequential(
-                    nn.Conv3d(self.inplanes,
+                    nn.Conv2d(self.inplanes,
                             planes * block.expansion,
                             kernel_size=1,
                             stride=stride,
                             bias=False), 
-                    get_norm(norm, planes * block.expansion) ) #nn.BatchNorm3d(planes * block.expansion)
+                    get_norm(norm, planes * block.expansion) )
+                # downsample = nn.Sequential(
+                #     nn.Conv3d(self.inplanes,
+                #             planes * block.expansion,
+                #             kernel_size=1,
+                #             stride=stride,
+                #             bias=False), 
+                #     get_norm(norm, planes * block.expansion) ) #nn.BatchNorm3d(planes * block.expansion)
 
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, norm=norm))
@@ -256,18 +272,39 @@ class GN_R2D_VPN(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, inputs_, return_frames=False):
+    def forward(self, inputs_, return_frames=False, autoreg=False):
         if isinstance(inputs_, list):
             inputs_ = inputs_[0]
         x = inputs_
         current_loc = 0
-        conv_input = self.stem(x)
+        
+        # conv_input = self.stem(x)
                 
+        # conv_input = self.ds_block(conv_input, current_loc, self.h_units[0][0])
+        
+        # timesteps = conv_input.shape[2]
+        # current_loc = self.h_units[0][0]
+        
+        x = inputs_
+        
+        for gnl in self.group_norm_layers:
+            gnl.reset_stats()
+
+        current_loc = 0
+        
+        timesteps = x.size(2)
+        
+        x = x.transpose(1,2)
+        x = x.reshape((-1, x.size(2), x.size(3), x.size(4)))
+
+        conv_input = self.stem(x)
+
         conv_input = self.ds_block(conv_input, current_loc, self.h_units[0][0])
         
-        timesteps = conv_input.shape[2]
+        conv_input = conv_input.reshape((-1, timesteps, conv_input.size(1), conv_input.size(2), conv_input.size(3))).transpose(1,2)
+
         current_loc = self.h_units[0][0]
-        
+
         hidden_states= {}
         if self.pred_gn:
             errors = 0
@@ -299,7 +336,8 @@ class GN_R2D_VPN(nn.Module):
                 loc = int(h_name.strip('horizontal'))
                 
                 if j > 0:
-                    x = self.ds_block(x[:,:,None], current_loc, loc).squeeze(2)
+                    # x = self.ds_block(x[:,:,None], current_loc, loc).squeeze(2)
+                    x = self.ds_block(x, current_loc, loc)
                 
                 hidden_states[h_name] = F.softplus(torch.zeros_like(x))
                 
@@ -323,23 +361,26 @@ class GN_R2D_VPN(nn.Module):
                 #                     inputs_.shape[3]//self._strides[loc], 
                 #                     inputs_.shape[4]//self._strides[loc]]))
         
-                hidden_states[h_name] = td_unit(hidden_states[h_name], x, timestep=0)
-                x = hidden_states[h_name]
-        
+                hidden_states[h_name], extra = td_unit(hidden_states[h_name], x, timestep=0, return_extra=['error'])
+                x = extra['error']
         
         for i in range(timesteps):
-            x = conv_input[:,:,0]
+            if autoreg and i>timesteps//2:
+                x = self.ds_block(self.stem(frame), 0, self.h_units[0][0])
+            else:
+                x = conv_input[:,:,0]
             current_loc = self.h_units[0][0]
             for j, (h_unit, h_name) in enumerate(self.h_units_and_names):
                 loc = int(h_name.strip('horizontal'))
                 
                 if j > 0:
-                    x = self.ds_block(x[:,:,None], current_loc, loc).squeeze(2)
+                    # x = self.ds_block(x[:,:,None], current_loc, loc).squeeze(2)
+                    x = self.ds_block(x, current_loc, loc)
                 
                 if i == 0 and h_name not in hidden_states:    
                     hidden_states[h_name] = F.softplus(torch.zeros_like(x))
                 
-                hidden_states[h_name], extra = h_unit(F.softplus(x), hidden_states[h_name], timestep=i, return_extra=['error'])
+                hidden_states[h_name] = h_unit(F.softplus(x), hidden_states[h_name], timestep=i)
                 # errors = errors + torch.norm(extra['error'].view(extra['error'].shape[0],-1), p=1, dim=1)/1e4
                 # if i > 0:
                 #     errors = errors + torch.abs(extra['error'].view(extra['error'].shape[0],-1)).mean(-1)
@@ -366,10 +407,14 @@ class GN_R2D_VPN(nn.Module):
                     loc = int(td_name.strip('topdown'))
                     h_name = 'horizontal'+str(loc)
                     
-                    hidden_states[h_name] = td_unit(hidden_states[h_name], x, timestep=i)
-                    x = hidden_states[h_name]
-                    if (x>10000).any():
-                        logger.info('variable %s at timestep %d out of bound'%(td_name,i))
+                    # hidden_states[h_name], extra = td_unit(hidden_states[h_name], x, timestep=i, return_extra=['error'])
+                    # x = hidden_states[h_name]
+
+                    hidden_states[h_name], extra = td_unit(hidden_states[h_name], x, timestep=i, return_extra=['error'])
+                    x = extra['error']
+                    
+                    if (x>1e6).any():
+                        logger.info('variable %s at timestep %d out of bound: %f'%(h_name,i, x.max().item()))
 
                 # prediction error -> next step lower layer is detached to avoid gradients flowing through lower layers
                 # pred_error = F.interpolate(x, conv_input.shape[2:], mode='trilinear', align_corners=True)
@@ -378,9 +423,10 @@ class GN_R2D_VPN(nn.Module):
                 
                 ## change architecture to take different locations into account
                 if self.pred_gn:
-                    frame = self.final_remap(x)
+                    # frame = self.final_remap(x)
+                    frame = self.output_conv(self.fb_spatial_transformer(x,input_trans=self.final_remap(x)))
+                    
                     if return_frames:
-                        
                         frames.append(frame)
                     pred_error = F.smooth_l1_loss(frame, inputs_[:,:,i+1]) # conv_input[:,:,1][:,:,None].detach()
                     errors = errors + pred_error

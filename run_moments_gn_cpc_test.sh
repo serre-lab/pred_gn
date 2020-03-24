@@ -19,8 +19,8 @@ python tools/run_net.py \
   DATA.COLOR_AUGMENTATION False \
   NUM_GPUS 2 \
   DATA.NUM_FRAMES 18 \
-  DATA.NUM_REPEATED_SAMPLES 3 \
-  TRAIN.BATCH_SIZE 4 \
+  DATA.NUM_REPEATED_SAMPLES 2 \
+  TRAIN.BATCH_SIZE 2 \
   DATA_LOADER.NUM_WORKERS 8 \
   OUTPUT_DIR /users/azerroug/data/azerroug/slowfast/outputs/$EXP_NAME
 

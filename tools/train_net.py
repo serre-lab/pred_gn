@@ -206,31 +206,50 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 writer.add_scalar('loss/top1_err', train_meter.mb_top1_err.get_win_median(), global_iters)
                 writer.add_scalar('loss/top5_err', train_meter.mb_top5_err.get_win_median(), global_iters)
                 writer.add_scalar('loss/loss', train_meter.loss.get_win_median(), global_iters)
-            if global_iters%cfg.SUMMARY_PERIOD==0:
+            if global_iters%cfg.SUMMARY_PERIOD==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS):
+                n_rows = 17
                 with torch.no_grad():
-                    logger.info(inputs[i].shape)
-                    sys.stdout.flush()
+                    # logger.info(inputs[i].shape)
+                    # sys.stdout.flush()
                     inputs[0] = inputs[0][:min(3,len(inputs[0]))] 
-                    frames = model(inputs, return_frames=True)['frames']
-                    inputs = inputs[0].transpose(1,2)[:,1::2][:, -8:]
-                    frames = frames.transpose(1,2)[:,1::2][:, -8:]
+                    frames = model(inputs, return_frames=True, autoreg=True)['frames']
+                    
+                    # inputs = inputs[0].transpose(1,2)[:,1::2][:, -8:]
+                    # frames = frames.transpose(1,2)[:,1::2][:, -8:]
+                    
+                    inputs = inputs[0].transpose(1,2)[:, -n_rows:]
+                    frames = frames.transpose(1,2)[:, -n_rows:]
+
+                    # logger.info(frames.shape)
+                    # logger.info(input_frames.shape)
 
                     inputs = inputs*inputs.new(cfg.DATA.STD)[None,None,:,None,None]+inputs.new(cfg.DATA.MEAN)[None,None,:,None,None]
+                    # input_frames = input_frames-input_frames.min()
+                    # input_frames = input_frames/input_frames.max()
                     frames = frames*frames.new(cfg.DATA.STD)[None,None,:,None,None]+frames.new(cfg.DATA.MEAN)[None,None,:,None,None]
-                    images = torch.cat([inputs, frames], 1).view((-1,) + inputs.shape[2:]) 
+                    # frames = frames-frames.min()
+                    # frames = frames/frames.max()
+                    images = torch.cat([inputs, frames], 1).reshape((-1,) + inputs.shape[2:]) 
                 
-                npimg = tv.utils.make_grid(images, nrow=8, normalize=True)
-                logger.info(npimg.shape)
-                npimg = npimg.cpu().data.numpy().transpose((1,2,0)).astype(np.uint8())
-                im = Image.fromarray(npimg)
-                im.save(os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters))
+                # images = images.reshape((-1,n_rows) + images.shape[1:]).transpose((2,0,3,1,4))
+                # images = images.reshape((images.shape[0], images.shape[1]*images.shape[2], images.shape[3]*images.shape[4]))
+                
+                # npimg = (images.transpose((1,2,0))*255).astype(np.uint8())
+                # im = Image.fromarray(npimg)
+                # im.save(os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters))
 
-                del images
+                # npimg = tv.utils.make_grid(images, nrow=8, normalize=True)
+                # get_logger.info(npimg.max())
+                # npimg = (npimg.cpu().data.numpy().transpose((1,2,0))*255).astype(np.uint8())
+                # im = Image.fromarray(npimg)
+                # im.save(os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters))
+
+                # del images
                 
                 # grid = tv.utils.make_grid(images, nrow=8, normalize=True)
                 # writer.add_image('predictions', images, global_iters)
                 
-                # tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters), nrow=8, normalize=True)
+                tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters), nrow=n_rows, normalize=True)
                 
         train_meter.log_iter_stats(cur_epoch, cur_iter)
         train_meter.iter_tic()
