@@ -547,7 +547,7 @@ class hConvGRUCell(nn.Module):
         if 'error' in return_extra:
             extra['error'] = inhibition
 
-        g1_t = torch.sigmoid(self.u1_gate(inhibition))
+        g2_t = torch.sigmoid(self.u1_gate(inhibition))
         excitation = F.softplus(self.bn[1](
             F.conv2d(
                 inhibition,
@@ -559,7 +559,7 @@ class hConvGRUCell(nn.Module):
             h_t = F.softplus(
                 self.kappa * (
                     inhibition + excitation) + self.w * inhibition * excitation)
-        op = (1 - g1_t) * h_ + g1_t * h_t
+        op = (1 - g2_t) * h_ + g2_t * h_t
         if extra:
             return op, extra
         else:
@@ -567,6 +567,143 @@ class hConvGRUCell(nn.Module):
 
 
 #########################################################################################################
+
+class tdConvGRUCell_err(nn.Module):
+    """
+    Generate a TD cell
+    """
+
+    def __init__(
+            self,
+            fan_in,
+            td_fan_in,
+            diff_fan_in,
+            kernel_size,
+            gala=False,
+            batchnorm=True,
+            timesteps=1,
+            init=nn.init.orthogonal_,
+            grad_method='bptt',
+            norm='SyncBN',
+            spatial_transform=False,
+            gn_remap=False):
+        super(tdConvGRUCell_err, self).__init__()
+
+        self.padding = kernel_size // 2
+        self.input_size = fan_in
+        self.hidden_size = td_fan_in
+        self.timesteps = timesteps
+        self.batchnorm = batchnorm
+        self.grad_method = grad_method
+        self.gala = gala
+        self.gn_remap = gn_remap
+
+        self.remap_0 = nn.Conv2d(td_fan_in, diff_fan_in, 1)
+        self.remap_1 = nn.Conv2d(diff_fan_in, fan_in, 1)
+        if self.gn_remap:
+            self.gn_remap0 = get_norm(norm, diff_fan_in)
+            self.gn_remap1 = get_norm(norm, fan_in)
+        
+        self.spatial_transform = spatial_transform
+        if self.spatial_transform:
+            self.warp = SpatialTransformer(fan_in)
+
+        self.u1_gate = nn.Conv2d(fan_in, fan_in, 1)
+        self.u2_gate = nn.Conv2d(fan_in, fan_in, 1)
+
+        self.w_gate_inh = nn.Parameter(
+            torch.empty(fan_in, fan_in, kernel_size, kernel_size))
+        self.w_gate_exc = nn.Parameter(
+            torch.empty(fan_in, fan_in, kernel_size, kernel_size))
+
+        self.alpha = nn.Parameter(torch.empty((fan_in, 1, 1)))
+        self.mu = nn.Parameter(torch.empty((fan_in, 1, 1)))
+        self.w = nn.Parameter(torch.empty((fan_in, 1, 1)))
+        self.kappa = nn.Parameter(torch.empty((fan_in, 1, 1)))
+
+        if norm == "":
+            norm = 'SyncBN'
+
+        self.bn = nn.ModuleList(
+            [get_norm(norm, fan_in) for i in range(2)])
+
+        # TODO: Alekh, why is orthogonal slow af
+        init(self.w_gate_inh)
+        init(self.w_gate_exc)
+
+        init(self.u1_gate.weight)
+        init(self.u2_gate.weight)
+
+        for bn in self.bn:
+            nn.init.constant_(bn.weight, 0.1)
+
+        nn.init.constant_(self.alpha, 0.1)
+        nn.init.constant_(self.mu, 1)
+        nn.init.constant_(self.w, 0.5)
+        nn.init.constant_(self.kappa, 0.5)
+        # if self.timesteps == 1:
+        #     init_timesteps = 2
+        # else:
+        #     init_timesteps = self.timesteps
+        nn.init.uniform_(self.u1_gate.bias.data, 1, self.timesteps - 1)
+        self.u1_gate.bias.data.log()
+        self.u2_gate.bias.data = -self.u1_gate.bias.data
+
+    def forward(self, lower_, higher_, error_=None, timestep=0, return_extra=[]):
+        extra={}
+        prev_state2 = F.interpolate(
+            higher_,
+            size = lower_.shape[2:],
+            #scale_factor=2,
+            mode="nearest")
+        if self.gn_remap:
+            prev_state2 = F.softplus(self.gn_remap0(self.remap_0(prev_state2)))
+            prev_state2 = F.softplus(self.gn_remap1(self.remap_1(prev_state2)))
+        else:
+            prev_state2 = F.softplus(self.remap_0(prev_state2))
+            prev_state2 = F.softplus(self.remap_1(prev_state2))
+        
+        if error_ is not None:
+            prev_state2 = prev_state2 + error_
+        
+        if 'remap' in return_extra:
+            extra['remap'] = prev_state2
+
+        g1_t = torch.sigmoid(self.u1_gate(prev_state2))
+        c1_t = self.bn[0](
+            F.conv2d(
+                prev_state2 * g1_t,
+                self.w_gate_inh,
+                padding=self.padding))
+
+        inh = F.softplus(c1_t * (self.alpha * prev_state2 + self.mu))
+        
+        if 'inh' in return_extra:
+            extra['inh'] = inh
+
+        supp = F.softplus(
+            lower_ - inh)
+
+        if 'error' in return_extra:
+            extra['error'] = supp
+
+        g2_t = torch.sigmoid(self.u2_gate(supp))
+        exc = self.bn[1](
+            F.conv2d(
+                supp,
+                self.w_gate_exc,
+                padding=self.padding))
+        h2_t = F.softplus(
+            self.kappa * (
+                supp + exc) + self.w * supp * exc)
+        op = (1 - g2_t) * lower_ + g2_t * h2_t  # noqa Note: a previous version had higher_ in place of lower_
+        
+        if self.spatial_transform:
+            op = self.warp(supp, op)
+        if extra:
+            return op, extra
+        else:
+            return op
 
 class tdConvGRUCell(nn.Module):
     """

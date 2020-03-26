@@ -24,6 +24,8 @@ import slowfast.utils.distributed as du
 import slowfast.utils.logging as logging
 import slowfast.utils.metrics as metrics
 import slowfast.utils.misc as misc
+import slowfast.utils.viz_helpers as viz_helpers
+
 from slowfast.datasets import loader
 from slowfast.models import build_model
 from slowfast.utils.meters import AVAMeter, TrainMeter, ValMeter
@@ -120,11 +122,6 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             total_loss += pred_loss
         if cfg.PREDICTIVE.CPC:
             total_loss += cpc_loss
-        # logger.info(pred_loss)
-        # logger.info(cpc_loss)
-        # logger.info(total_loss)
-        
-        # logger.info(preds)
         
         if cfg.MODEL.LOSS_FUNC != '':
             # Explicitly declare reduction to mean.
@@ -133,7 +130,6 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             # Compute the loss.
             loss = loss_fun(preds, labels)
             
-            # logger.info(loss)
             total_loss += loss
 
         
@@ -144,10 +140,16 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
         optimizer.zero_grad()
         total_loss.backward()
         # Update the parameters.
-
-        # for p_name, p in model.named_parameters():
-        #     if p.requires_grad:
-        #         p.grad.cpu().data.numpy()
+        
+        ####################################################################################################################################
+        # check gradients
+        ####################################################################################################################################
+        if writer is not None and global_iters%cfg.SUMMARY_PERIOD==0:
+            
+            n_p = model.module.named_parameters() if hasattr(model,'module') else model.named_parameters()
+            fig = viz_helpers.plot_grad_flow_v2(n_p)
+            writer.add_figure('grad_flow/grad_flow', fig, global_iters)
+            
         optimizer.step()
 
         if cfg.DETECTION.ENABLE:
@@ -199,57 +201,36 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 top1_err, top5_err, loss, lr, inputs[0].size(0) * cfg.NUM_GPUS, **loss_logs                
             )
 
-            if global_iters%cfg.LOG_PERIOD==0:
+            if writer is not None and global_iters%cfg.LOG_PERIOD==0:
                 for k,v in loss_logs.items():
                     
                     writer.add_scalar('loss/'+k.strip('loss_'), train_meter.stats[k].get_win_median(), global_iters)
                 writer.add_scalar('loss/top1_err', train_meter.mb_top1_err.get_win_median(), global_iters)
                 writer.add_scalar('loss/top5_err', train_meter.mb_top5_err.get_win_median(), global_iters)
                 writer.add_scalar('loss/loss', train_meter.loss.get_win_median(), global_iters)
-            if global_iters%cfg.SUMMARY_PERIOD==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS):
+            if global_iters%cfg.SUMMARY_PERIOD==0 and du.get_rank()==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS):
                 n_rows = 17
                 with torch.no_grad():
                     # logger.info(inputs[i].shape)
                     # sys.stdout.flush()
                     inputs[0] = inputs[0][:min(3,len(inputs[0]))] 
-                    frames = model(inputs, return_frames=True, autoreg=True)['frames']
-                    
-                    # inputs = inputs[0].transpose(1,2)[:,1::2][:, -8:]
-                    # frames = frames.transpose(1,2)[:,1::2][:, -8:]
+                    frames = model(inputs, extra=['frames'], autoreg=True)['frames']
                     
                     inputs = inputs[0].transpose(1,2)[:, -n_rows:]
                     frames = frames.transpose(1,2)[:, -n_rows:]
 
-                    # logger.info(frames.shape)
-                    # logger.info(input_frames.shape)
-
                     inputs = inputs*inputs.new(cfg.DATA.STD)[None,None,:,None,None]+inputs.new(cfg.DATA.MEAN)[None,None,:,None,None]
-                    # input_frames = input_frames-input_frames.min()
-                    # input_frames = input_frames/input_frames.max()
                     frames = frames*frames.new(cfg.DATA.STD)[None,None,:,None,None]+frames.new(cfg.DATA.MEAN)[None,None,:,None,None]
-                    # frames = frames-frames.min()
-                    # frames = frames/frames.max()
                     images = torch.cat([inputs, frames], 1).reshape((-1,) + inputs.shape[2:]) 
-                
-                # images = images.reshape((-1,n_rows) + images.shape[1:]).transpose((2,0,3,1,4))
-                # images = images.reshape((images.shape[0], images.shape[1]*images.shape[2], images.shape[3]*images.shape[4]))
-                
-                # npimg = (images.transpose((1,2,0))*255).astype(np.uint8())
-                # im = Image.fromarray(npimg)
-                # im.save(os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters))
-
-                # npimg = tv.utils.make_grid(images, nrow=8, normalize=True)
-                # get_logger.info(npimg.max())
-                # npimg = (npimg.cpu().data.numpy().transpose((1,2,0))*255).astype(np.uint8())
-                # im = Image.fromarray(npimg)
-                # im.save(os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters))
-
-                # del images
                 
                 # grid = tv.utils.make_grid(images, nrow=8, normalize=True)
                 # writer.add_image('predictions', images, global_iters)
                 
                 tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters), nrow=n_rows, normalize=True)
+                
+                del images
+                del frames
+                del inputs
                 
         train_meter.log_iter_stats(cur_epoch, cur_iter)
         train_meter.iter_tic()
@@ -430,8 +411,11 @@ def train(cfg):
     # Print config.
     logger.info("Train with config:")
     logger.info(pprint.pformat(cfg))
-
-    writer = SummaryWriter(log_dir=cfg.OUTPUT_DIR)
+    
+    if du.get_rank()==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS):
+        writer = SummaryWriter(log_dir=cfg.OUTPUT_DIR)
+    else:
+        writer = None
 
     # Build the video model and print model statistics.
     model = build_model(cfg)
