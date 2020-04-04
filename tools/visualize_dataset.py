@@ -3,6 +3,8 @@ import argparse
 import sys
 import torch
 
+import torchvision as tv
+
 import slowfast.utils.checkpoint as cu
 import slowfast.utils.multiprocessing as mpu
 from slowfast.config.defaults import get_cfg
@@ -128,9 +130,13 @@ def visualize(cfg):
 
     train_set = build_dataset(cfg.TEST.DATASET, cfg, "train")
 
-    for i in range(5):
-        frames, label, _, _ = train_set.get_augmented_examples(i)
-        frames = frames[0].permute(0,2,3,4,1)
+    for i in np.random.choice(len(train_set), 5):
+        
+        # frames, label, _, _ = train_set.get_augmented_examples(i)
+        frames, label, _, _ = train_set[i]
+        logger.info(frames[0].shape)
+        # frames = frames[0].permute(0,2,3,4,1)
+        frames = frames[0].transpose(0,1)#.permute(1,2,3,0)
         logger.info('### Z score ##########')
         logger.info('min')
         logger.info(frames.min())
@@ -141,8 +147,8 @@ def visualize(cfg):
         logger.info('var')
         logger.info(frames.var())
         
-        frames = frames * torch.tensor(cfg.DATA.STD)#[None,:,None,None,None]
-        frames = frames + torch.tensor(cfg.DATA.MEAN)#[None,:,None,None,None]
+        frames = frames * torch.tensor(cfg.DATA.STD)[None,:,None,None] #[None,:,None,None,None]
+        frames = frames + torch.tensor(cfg.DATA.MEAN)[None,:,None,None] #[None,:,None,None,None]
 
         logger.info('### normal ##########')
         logger.info('min')
@@ -154,11 +160,12 @@ def visualize(cfg):
         logger.info('var')
         logger.info(frames.var())
         
-        for a in range(frames.size(0)):
-            for s in range(frames.size(1)):
+        tv.utils.save_image(frames, os.path.join(cfg.OUTPUT_DIR, 'example_%d.jpg'%i), nrow=18, normalize=True)
+        # for a in range(frames.size(0)):
+        #     for s in range(frames.size(1)):
                 
-                im = Image.fromarray((frames[a,s].data.numpy()*255).astype(np.uint8))
-                im.save(os.path.join(cfg.OUTPUT_DIR,'example_%d_aug%d_frame_%d.png'%(i,a,s)))
+        #         im = Image.fromarray((frames[a,s].data.numpy()*255).astype(np.uint8))
+        #         im.save(os.path.join(cfg.OUTPUT_DIR,'example_%d_aug%d_frame_%d.png'%(i,a,s)))
 
 
 

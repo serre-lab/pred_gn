@@ -23,7 +23,7 @@ def _suppress_print():
     builtins.print = print_pass
 
 
-def setup_logging():
+def setup_logging(cfg):
     """
     Sets up the logging for multiple processes. Only enable the logging for the
     master process, and suppress logging for the non-master processes.
@@ -31,12 +31,15 @@ def setup_logging():
     # Set up logging format.
     _FORMAT = "[%(levelname)s: %(filename)s: %(lineno)4d]: %(message)s"
 
-    if du.is_master_proc():
+    if du.is_master_proc(cfg.NUM_GPUS):
         # Enable logging for the master process.
         logging.root.handlers = []
         logging.basicConfig(
             level=logging.INFO, format=_FORMAT, stream=sys.stdout
         )
+        
+        logging.info(du.get_rank())
+        logging.info(du.get_world_size())
     else:
         # Suppress logging for non-master processes.
         _suppress_print()

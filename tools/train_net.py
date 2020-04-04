@@ -9,6 +9,7 @@ import os
 import numpy as np
 import pprint
 import torch
+import torch.nn.functional as F
 
 import torchvision as tv
 
@@ -106,24 +107,27 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             # Perform the forward pass.
             preds = model(inputs)
         
-
         if cfg.PREDICTIVE.ENABLE:
             errors = preds['pred_errors']
 
         if cfg.PREDICTIVE.CPC:
             cpc_loss = preds['cpc_loss']
             
-        if isinstance(preds, dict):
+        # if isinstance(preds, dict):
+        if cfg.SUPERVISED:
             preds = preds['logits']
 
         total_loss = 0
         if cfg.PREDICTIVE.ENABLE:
             pred_loss = errors.mean()
             total_loss += pred_loss
+            # copy_baseline = F.smooth_l1_loss(inputs[i][:,:,1:] - inputs[i][:,:,:-1], torch.zeros_like(inputs[i][:,:,1:]))
+            copy_baseline = F.l1_loss(inputs[i][:,:,1:] - inputs[i][:,:,:-1], torch.zeros_like(inputs[i][:,:,1:]))
+            
         if cfg.PREDICTIVE.CPC:
             total_loss += cpc_loss
         
-        if cfg.MODEL.LOSS_FUNC != '':
+        if cfg.MODEL.LOSS_FUNC != '' and cfg.SUPERVISED:
             # Explicitly declare reduction to mean.
             loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
 
@@ -131,7 +135,7 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             loss = loss_fun(preds, labels)
             
             total_loss += loss
-
+        
         
         # check Nan Loss.
         misc.check_nan_losses(total_loss)
@@ -159,55 +163,65 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
 
             train_meter.iter_toc()
             # Update and log stats.
-            train_meter.update_stats(0, 0, loss, lr, inputs[0].size(0) * cfg.NUM_GPUS)
+            train_meter.update_stats(lr, inputs[0].size(0) * cfg.NUM_GPUS, loss=loss)
         else:
-            # Compute the errors.
-            num_topks_correct = metrics.topks_correct(preds, labels, (1, 5))
-            top1_err, top5_err = [
-                (1.0 - x / preds.size(0)) * 100.0 for x in num_topks_correct
-            ]
-
+            if cfg.SUPERVISED:
+                # Compute the errors.
+                num_topks_correct = metrics.topks_correct(preds, labels, (1, 5))
+                top1_err, top5_err = [
+                    (1.0 - x / preds.size(0)) * 100.0 for x in num_topks_correct
+                ]
+                
+            
             # Gather all the predictions across all the devices.
             if cfg.NUM_GPUS > 1:
                 if cfg.PREDICTIVE.ENABLE:
                     pred_loss = du.all_reduce([pred_loss])
                     pred_loss = pred_loss[0]
-                    
+                    copy_baseline = du.all_reduce([copy_baseline])
+                    copy_baseline = copy_baseline[0]
+
                 if cfg.PREDICTIVE.CPC:
                     cpc_loss = du.all_reduce([cpc_loss])
                     cpc_loss = cpc_loss[0]
-
-                loss, top1_err, top5_err = du.all_reduce([loss, top1_err, top5_err])
+                if cfg.SUPERVISED:
+                    loss, top1_err, top5_err = du.all_reduce([loss, top1_err, top5_err])
 
             loss_logs = {}
             if cfg.PREDICTIVE.ENABLE:
                 pred_loss = pred_loss.item()
                 loss_logs['loss_pred']= pred_loss
+                copy_baseline = copy_baseline.item()
+                loss_logs['copy_comp'] = copy_baseline
             if cfg.PREDICTIVE.CPC:
                 cpc_loss = cpc_loss.item()
                 loss_logs['loss_cpc']= cpc_loss
             
-
+            if cfg.SUPERVISED:
             # Copy the stats from GPU to CPU (sync point).
-            loss, top1_err, top5_err = (
-                loss.item(),
-                top1_err.item(),
-                top5_err.item(),
-            )
+                loss, top1_err, top5_err = (
+                    loss.item(),
+                    top1_err.item(),
+                    top5_err.item(),
+                )
+
+                loss_logs['loss_class']= loss
+                loss_logs['top5_err']= top5_err
+                loss_logs['top1_err']= top1_err
+                
 
             train_meter.iter_toc()
             # Update and log stats.
             train_meter.update_stats(
-                top1_err, top5_err, loss, lr, inputs[0].size(0) * cfg.NUM_GPUS, **loss_logs                
+                lr, inputs[0].size(0) * cfg.NUM_GPUS, **loss_logs                
             )
 
             if writer is not None and global_iters%cfg.LOG_PERIOD==0:
                 for k,v in loss_logs.items():
-                    
                     writer.add_scalar('loss/'+k.strip('loss_'), train_meter.stats[k].get_win_median(), global_iters)
-                writer.add_scalar('loss/top1_err', train_meter.mb_top1_err.get_win_median(), global_iters)
-                writer.add_scalar('loss/top5_err', train_meter.mb_top5_err.get_win_median(), global_iters)
-                writer.add_scalar('loss/loss', train_meter.loss.get_win_median(), global_iters)
+                # writer.add_scalar('loss/top1_err', train_meter.mb_top1_err.get_win_median(), global_iters)
+                # writer.add_scalar('loss/top5_err', train_meter.mb_top5_err.get_win_median(), global_iters)
+                # writer.add_scalar('loss/loss', train_meter.loss.get_win_median(), global_iters)
             if global_iters%cfg.SUMMARY_PERIOD==0 and du.get_rank()==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS):
                 n_rows = 17
                 with torch.no_grad():
@@ -302,28 +316,25 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
             if cfg.PREDICTIVE.CPC:
                 cpc_loss = preds['cpc_loss']
                 
-            if isinstance(preds, dict):
+            # if isinstance(preds, dict):
+            if cfg.SUPERVISED:
                 preds = preds['logits']
                 
-            
-
             # Explicitly declare reduction to mean.
-            
-
-            if cfg.MODEL.LOSS_FUNC != '':
+            if cfg.MODEL.LOSS_FUNC != '' and cfg.SUPERVISED:
                 loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
                 
                 # Compute the loss.
                 loss = loss_fun(preds, labels)
                 # total_loss = total_loss + loss
 
-            # Compute the errors.
-            num_topks_correct = metrics.topks_correct(preds, labels, (1, 5))
+                # Compute the errors.
+                num_topks_correct = metrics.topks_correct(preds, labels, (1, 5))
 
-            # Combine the errors across the GPUs.
-            top1_err, top5_err = [
-                (1.0 - x / preds.size(0)) * 100.0 for x in num_topks_correct
-            ]
+                # Combine the errors across the GPUs.
+                top1_err, top5_err = [
+                    (1.0 - x / preds.size(0)) * 100.0 for x in num_topks_correct
+                ]
 
             # Gather all the predictions across all the devices.
             if cfg.NUM_GPUS > 1:
@@ -334,8 +345,9 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
                 if cfg.PREDICTIVE.CPC:
                     cpc_loss = du.all_reduce([cpc_loss])
                     cpc_loss = cpc_loss[0]
-
-                loss, top1_err, top5_err = du.all_reduce([loss, top1_err, top5_err])
+                
+                if cfg.SUPERVISED:
+                    loss, top1_err, top5_err = du.all_reduce([loss, top1_err, top5_err])
 
             # # Copy the stats from GPU to CPU (sync point).
             # loss, top1_err, top5_err = (
@@ -347,8 +359,7 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
             # if cfg.NUM_GPUS > 1:
             #     top1_err, top5_err = du.all_reduce([top1_err, top5_err])
 
-            # Copy the errors from GPU to CPU (sync point).
-            loss, top1_err, top5_err = loss.item(), top1_err.item(), top5_err.item()
+            
 
             loss_logs = {}
             if cfg.PREDICTIVE.ENABLE:
@@ -357,11 +368,17 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
             if cfg.PREDICTIVE.CPC:
                 cpc_loss = cpc_loss.item()
                 loss_logs['loss_cpc']= cpc_loss
+            if cfg.SUPERVISED:
+                # Copy the errors from GPU to CPU (sync point).
+                loss, top1_err, top5_err = loss.item(), top1_err.item(), top5_err.item()
+                loss_logs['loss_class']= loss
+                loss_logs['top1_err']= top1_err
+                loss_logs['top5_err']= top5_err
 
             val_meter.iter_toc()
             # Update and log stats.
             val_meter.update_stats(
-                top1_err, top5_err, inputs[0].size(0) * cfg.NUM_GPUS,  **loss_logs
+                inputs[0].size(0) * cfg.NUM_GPUS,  **loss_logs
             )
 
         val_meter.log_iter_stats(cur_epoch, cur_iter)
@@ -406,7 +423,7 @@ def train(cfg):
     torch.manual_seed(cfg.RNG_SEED)
 
     # Setup logging format.
-    logging.setup_logging()
+    logging.setup_logging(cfg)
 
     # Print config.
     logger.info("Train with config:")
@@ -419,7 +436,7 @@ def train(cfg):
 
     # Build the video model and print model statistics.
     model = build_model(cfg)
-    if du.is_master_proc():
+    if du.is_master_proc(num_gpus=cfg.NUM_GPUS):
         misc.log_model_info(model, cfg, is_train=True)
 
     # Construct the optimizer.

@@ -19,14 +19,15 @@ EXP_NAME="GN_R2D_Moments_VPN_S_Dist"
 NCCL_DEBUG="INFO" \
 python tools/run_net.py \
   --cfg configs/Moments/GN_R2D_18_PRED_VPN.yaml \
-  --init_method tcp://172.20.216.10:1234 \
+  --init_method tcp://172.20.216.5:1234 \
   --num_shards 2 \
   --shard_id 1 \
   DATA.COLOR_AUGMENTATION False \
+  MODEL.MODEL_NAME GN_VPN \
   NUM_GPUS 10 \
   DATA.NUM_FRAMES 18 \
   DATA.NUM_REPEATED_SAMPLES 2 \
-  TRAIN.BATCH_SIZE 24 \
+  TRAIN.BATCH_SIZE 18 \
   DATA_LOADER.NUM_WORKERS 8 \
   SUMMARY_PERIOD 1000 \
   OUTPUT_DIR /users/azerroug/data/azerroug/slowfast/outputs/$EXP_NAME

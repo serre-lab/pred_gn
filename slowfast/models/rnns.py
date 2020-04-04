@@ -542,11 +542,18 @@ class hConvGRUCell(nn.Module):
             inhibition = F.softplus(  # F.softplus(input_) moved outside
                 input_ - c0_t * (self.alpha * h_ + self.mu))
         else:
-            inhibition = F.softplus(  # F.softplus(input_) moved outside
-                F.softplus(input_) - F.softplus(c0_t * (self.alpha * h_ + self.mu)))
+            # inhibition = F.softplus(  # F.softplus(input_) moved outside
+            #     F.softplus(input_) - F.softplus(c0_t * (self.alpha * h_ + self.mu)))
+            inhibition_ = F.softplus(input_) - F.softplus(c0_t * (self.alpha * h_ + self.mu))
+
+        if 'error_' in return_extra:
+            extra['error_'] = inhibition_
+        
+        inhibition = F.softplus(inhibition_)
+
         if 'error' in return_extra:
             extra['error'] = inhibition
-
+        
         g2_t = torch.sigmoid(self.u1_gate(inhibition))
         excitation = F.softplus(self.bn[1](
             F.conv2d(

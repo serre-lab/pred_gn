@@ -372,7 +372,7 @@ _C.SUMMARY_PERIOD = 100
 # Distributed backend.
 _C.DIST_BACKEND = "nccl"
 
-
+_C.SUPERVISED = True
 
 
 # ---------------------------------------------------------------------------- #
@@ -512,6 +512,32 @@ _C.HMDB.TRAIN_USE_COLOR_AUGMENTATION = False
 
 # Whether to do horizontal flipping during test.
 _C.HMDB.TEST_FORCE_FLIP = False
+
+# -----------------------------------------------------------------------------
+# IntPhys Dataset options
+# -----------------------------------------------------------------------------
+_C.INTPHYS = CfgNode()
+
+# Whether to only use PCA jitter augmentation when using color augmentation
+# method (otherwise combine with color jitter method).
+_C.INTPHYS.TRAIN_PCA_JITTER_ONLY = True
+
+# Eigenvalues for PCA jittering. Note PCA is RGB based.
+_C.INTPHYS.TRAIN_PCA_EIGVAL = [0.225, 0.224, 0.229]
+
+# Eigenvectors for PCA jittering.
+_C.INTPHYS.TRAIN_PCA_EIGVEC = [
+    [-0.5675, 0.7192, 0.4009],
+    [-0.5808, -0.0045, -0.8140],
+    [-0.5836, -0.6948, 0.4203],
+]
+
+# Training augmentation parameters
+# Whether to use color augmentation method.
+_C.INTPHYS.TRAIN_USE_COLOR_AUGMENTATION = False
+
+# Whether to do horizontal flipping during test.
+_C.INTPHYS.TEST_FORCE_FLIP = False
 
 
 def _assert_and_infer_cfg(cfg):

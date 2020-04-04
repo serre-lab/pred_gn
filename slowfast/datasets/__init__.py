@@ -6,3 +6,4 @@ from .build import DATASET_REGISTRY, build_dataset  # noqa
 from .kinetics import Kinetics  # noqa
 from .hmdb51 import Hmdb51  # noqa
 from .moments import Moments
+from .intphys import Intphys
