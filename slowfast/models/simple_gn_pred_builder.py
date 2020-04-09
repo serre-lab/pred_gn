@@ -234,8 +234,6 @@ class GN_PRED(nn.Module):
 
         conv_input = inputs_
 
-        current_loc = self.h_units[0][0]
-
         hidden_states = {}
         bu_errors = {}
 
@@ -277,15 +275,14 @@ class GN_PRED(nn.Module):
                 loc = int(td_name.strip('topdown'))
                 h_name = 'horizontal'+str(loc)
                 
-                hidden_states[h_name], extra_td = td_unit(hidden_states[h_name], x, timestep=i, return_extra=['inh']) # , 'inh', 'mix_layer'
+                hidden_states[h_name], extra_td = td_unit(hidden_states[h_name], x, timestep=i, return_extra=[]) # , 'inh', 'mix_layer'
                 
                 x = hidden_states[h_name]
 
             if autoreg and i>timesteps//2:
                 x = frame
             else:
-                x = conv_input[:,:,0]
-            current_loc = self.h_units[0][0]
+                x = conv_input[:,:,i]
             
             if 'hidden_errors' in extra:
                 hidden_errors.append([])
@@ -294,7 +291,6 @@ class GN_PRED(nn.Module):
             # for j, (h_unit, h_name) in enumerate(self.h_units_and_names):
             #     hidden_out.append(hidden_states[h_name]) 
             ###########
-
 
             for j, (h_unit, h_name) in enumerate(self.h_units_and_names):
                 loc = int(h_name.strip('horizontal'))
@@ -323,7 +319,6 @@ class GN_PRED(nn.Module):
                 ###########
 
                 x = bu_errors[h_name]
-
                 
                 if j < len(self.h_units_and_names)-1:
                     x = self.feedforward_units[j](x)
@@ -335,7 +330,7 @@ class GN_PRED(nn.Module):
                         errors = errors + bu_pred_error*0.1
                     else:
                         errors = errors + bu_pred_error
-                current_loc = loc
+
 
             if self.cpc_gn:
                 if i >= min(self.cpc_steps):
@@ -344,9 +339,6 @@ class GN_PRED(nn.Module):
                 for step in self.cpc_steps:
                     if i < timesteps-step: 
                         cpc_preds[step].append(self.spatial_transforms[step](x, self.feature_transforms[step](x)))
-
-            ### important
-            conv_input = conv_input[:,:,1:]
 
         if self.run_classification:
             logits = self.head(hidden_states[self.h_units_and_names[-1][1]][:,:,None].detach()) 
