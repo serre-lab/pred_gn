@@ -29,9 +29,10 @@ from .gn_helper import  TemporalCausalConv3d, \
                         conv1x3x3, \
                         downsample_basic_block
                         
-# import slowfast.utils.logging as logging
+import kornia
+import slowfast.utils.logging as logging
 
-# logger = logging.get_logger(__name__)
+logger = logging.get_logger(__name__)
 
 from .build import MODEL_REGISTRY
 
@@ -90,7 +91,14 @@ class GN_VPN(nn.Module):
         h_locations = [h[0] for h in h_units]
         for td in td_units:
             assert td[0] in h_locations, 'no horizontal location found for td location' 
-    
+
+
+        
+        # self.color_aug = kornia.augmentation.ColorJitter(brightness= 0.05, contrast= 0.05, saturation = 0.05, hue = 0.05)
+        # self.affine_aug = kornia.augmentation.RandomAffine(degrees=(-5,5), translate=(2/224,2/224), scale=(0.95, 1.05), shear=(-1,1))
+        self.color_aug = kornia.augmentation.ColorJitter(brightness= 0.1, contrast= 0.1, saturation = 0.1, hue = 0.2, return_transform=True)
+        self.affine_aug = kornia.augmentation.RandomAffine(degrees=(-3,3), translate=(5/224,5/224), scale=(0.9, 1.1), shear=(-0.02,0.02), return_transform=True)
+
         # self._strides = [1]
         # self._out_feature_channels =[3]
         
@@ -116,10 +124,12 @@ class GN_VPN(nn.Module):
         #     self._out_feature_channels.append(self.inplanes)
         #     self._strides.append(self._strides[-1]*2)
         
+        ### small expansion of the image
+        self.stem = nn.Conv2d(3,8,3,padding=1)
         self._strides = [1]
-        self._out_feature_channels =[3]
+        self._out_feature_channels =[8]
         
-        fan_in = 3
+        fan_in = 8
         self.feedforward_units = []
         self.h_units_and_names = []
         horizontal_layers = []
@@ -131,7 +141,7 @@ class GN_VPN(nn.Module):
                 hidden_size=fan_in,
                 kernel_size=ks,
                 batchnorm=True,
-                timesteps=8,
+                timesteps=18,
                 gala=gala,
                 spatial_kernel=3,
                 less_softplus=False,
@@ -145,7 +155,7 @@ class GN_VPN(nn.Module):
             horizontal_layers += [[horizontal_name, fan_in]]
             if i< len(h_units)-1:
                 if i==0:
-                    fan_out = 64
+                    fan_out = 48
                 else:
                     fan_out = fan_in*2
                 
@@ -180,11 +190,11 @@ class GN_VPN(nn.Module):
                 kernel_size=ks,
                 gala=gala,
                 batchnorm=True,
-                timesteps=8,
+                timesteps=18,
                 init=nn.init.orthogonal_,
                 grad_method=grad_method,
                 norm=recurrent_bn,
-                spatial_transform=False,
+                spatial_transform=True,
                 gn_remap=False)
 
             topdown_name = "topdown{}".format(loc)
@@ -210,7 +220,7 @@ class GN_VPN(nn.Module):
             #     nn.ReLU()
             # )
             # self.fb_warp = SpatialTransformer(fan_in=fan_in)
-            self.output_conv = nn.Conv2d(3, 3, 3, padding=1)
+            self.output_conv = nn.Conv2d(pred_fan, 3, 3, padding=1)
 
         if self.cpc_gn:
             self.cpc_steps = cfg.PREDICTIVE.CPC_STEPS
@@ -256,14 +266,44 @@ class GN_VPN(nn.Module):
             gnl.reset_stats()
 
         current_loc = 0
+        aug_inputs = []
         
         timesteps = inputs_.size(2)
-        conv_input = inputs_
+
+        if self.training:
+            o_ ,aug_c = self.color_aug(inputs_[:,:,0])
+            o_ ,aug_a = self.affine_aug(o_)
+            # tr = kornia.linalg.compose_transformations(aug_c, aug_a)
+            aug_inputs.append(o_)
+
+            for i in range(1,inputs_.shape[2]):
+                #aug_inputs.append(kornia.warp_perspective(inputs_[:,:,i], tr, dsize=inputs_.shape[-2:]))
+                o_ = self.affine_aug(self.color_aug(inputs_[:,:,i], params=aug_c)[0], params=aug_a)[0]
+                # o_ ,aug_a = self.affine_aug(o_, params=aug_a)
+                aug_inputs.append(o_)
+            aug_inputs = torch.stack(aug_inputs, 2)
+
+            # for i in range(inputs_.shape[0]):
+            #     aug_inputs.append(self.affine_aug(self.color_aug(inputs_[i].transpose(0,1))).transpose(0,1))
+                
+            #     # b = kornia.warp_perspective(a, tr_c, dsize=a.shape[-2:])
+            #     # c = kornia.warp_perspective(b, tr_a, dsize=a.shape[-2:])
+            # aug_inputs = torch.stack(aug_inputs, 0)
+        else:
+            aug_inputs = inputs_
+
+        
+        conv_input = aug_inputs
 
         current_loc = self.h_units[0][0]
 
         hidden_states = {}
         bu_errors = {}
+
+        # mix_layer_out = []
+        # bu_errors_out =[]
+        # H_inh_out = []
+        # hidden_out = []
 
         if self.pred_gn:
             errors = 0
@@ -275,6 +315,9 @@ class GN_VPN(nn.Module):
         
         output = {}
 
+        # if 'input_aug' in extra:
+        output['input_aug'] = aug_inputs
+        
         ##########################################################################################
         # learned initialization
 
@@ -338,6 +381,9 @@ class GN_VPN(nn.Module):
             if 'hidden_errors' in extra:
                 hidden_errors.append([])
 
+            ### small expansion of the input
+            x = self.stem(x)
+
             for j, (h_unit, h_name) in enumerate(self.h_units_and_names):
                 loc = int(h_name.strip('horizontal'))
                 
@@ -351,16 +397,22 @@ class GN_VPN(nn.Module):
                 # bu_errors[h_name] = extra_h['error']
                 
                 ##### bu errors are minimized explicitly
-                hidden_states[h_name], extra_h = h_unit(x, hidden_states[h_name], timestep=i, return_extra=['error_'])
+                hidden_states[h_name], extra_h = h_unit(x, hidden_states[h_name], timestep=i, return_extra=['error_']) # , 'inh', 'mix_layer'
                 bu_errors[h_name] = extra_h['error_']
-                
+
+                ########### for viz
+                # bu_errors_out.append(extra_h['error_'])
+                # H_inh_out.append(extra_h['inh'])
+                # mix_layer_out.append(extra_h['mix_layer'])
+                ###########
+
                 if 'hidden_errors' in extra:
                     hidden_errors[-1].append(bu_errors[h_name].mean().detach())
 
                 ### R is passed up
-                x = hidden_states[h_name]
+                # x = hidden_states[h_name]
                 ### E is passed up
-                # x = bu_errors[h_name]
+                x = bu_errors[h_name]
 
                 # if (x>10000).any():
                 #     logger.info('variable %s at timestep %d out of bound'%(h_name,i))
@@ -389,7 +441,11 @@ class GN_VPN(nn.Module):
                     # x = extra_td['inh']
 
                     ### prediction is top down inh + errors, bu errors are minimized
-                    # hidden_states[h_name], extra_td = td_unit(hidden_states[h_name], x, F.softplus(bu_errors[h_name]), timestep=i, return_extra=['inh'])
+                    hidden_states[h_name], extra_td = td_unit(hidden_states[h_name], x, F.softplus(bu_errors[h_name]), timestep=i, return_extra=['inh'])
+                    x = extra_td['inh']
+
+                    ### prediction is top down inh + errors, no errors passed horiz
+                    # hidden_states[h_name], extra_td = td_unit(hidden_states[h_name], x, None, timestep=i, return_extra=['inh'])
                     # x = extra_td['inh']
                     
                     ### prediction is top down rep + errors
@@ -397,8 +453,8 @@ class GN_VPN(nn.Module):
                     # x = hidden_states[h_name]
 
                     ### prediction is top down rep + errors
-                    hidden_states[h_name] = td_unit(hidden_states[h_name], x, F.softplus(bu_errors[h_name]), timestep=i)
-                    x = hidden_states[h_name]
+                    # hidden_states[h_name] = td_unit(hidden_states[h_name], x, F.softplus(bu_errors[h_name]), timestep=i)
+                    # x = hidden_states[h_name]
                     
                     # if (x>1e6).any():
                     #     logger.info('variable %s at timestep %d out of bound: %f'%(h_name,i, x.max().item()))
@@ -420,10 +476,10 @@ class GN_VPN(nn.Module):
                     # pred_error = F.smooth_l1_loss(frame, inputs_[:,:,i+1])
                     
                     ### pred error on thresholded values
-                    pred_error = F.l1_loss(F.hardtanh(frame, 0,1), inputs_[:,:,i+1])
+                    # pred_error = F.l1_loss(F.hardtanh(frame, 0,1), inputs_[:,:,i+1])
 
                     ### pred error on logits
-                    # pred_error = F.l1_loss(frame, inputs_[:,:,i+1])
+                    pred_error = F.l1_loss(frame, inputs_[:,:,i+1])
 
                     errors = errors + pred_error
             #         if i==0:
@@ -435,6 +491,12 @@ class GN_VPN(nn.Module):
             #     bu_pred_error = F.l1_loss(bu_errors['horizontal0'], torch.zeros_like(bu_errors['horizontal0']))
             #     errors = errors + bu_pred_error
             
+
+            ########### for viz
+            # for j, (h_unit, h_name) in enumerate(self.h_units_and_names):
+            #     hidden_out.append(hidden_states[h_name]) 
+            ###########
+
             ### important
             conv_input = conv_input[:,:,1:]
 
@@ -474,6 +536,16 @@ class GN_VPN(nn.Module):
 
 
             output['cpc_loss'] = cpc_loss
+
+        # mix_layer_out = [torch.stack(mix_layer_out[i::5], 0) for  i in range(5)]
+        # bu_errors_out = [torch.stack(bu_errors_out[i::5], 0) for  i in range(5)] #torch.stack(bu_errors_out, 1)
+        # H_inh_out = [torch.stack(H_inh_out[i::5], 0) for  i in range(5)] # torch.stack(H_inh_out, 1)
+        # hidden_out = [torch.stack(hidden_out[i::5], 0) for  i in range(5)] # torch.stack(hidden_out, 1)
+
+        # output['mix_layer'] = mix_layer_out
+        # output['bu_errors'] = bu_errors_out
+        # output['H_inh'] = H_inh_out
+        # output['hidden'] = hidden_out
 
         # {'logits': output, 
         # 'cpc_loss': cpc_loss, 

@@ -1,0 +1,77 @@
+TRAIN:
+  ENABLE: True
+  DATASET: Mmnist
+  BATCH_SIZE: 64
+  EVAL_PERIOD: 100
+  CHECKPOINT_PERIOD: 1
+  AUTO_RESUME: True
+DATA:
+  NUM_FRAMES: 18
+  TRAIN_CROP_SIZE: 64
+  TEST_CROP_SIZE: 64
+  INPUT_CHANNEL_NUM: [1]
+  PATH_TO_DATA_DIR: /users/azerroug/data/azerroug/mmnist
+  MEAN: [0.0, 0.0, 0.0]
+  STD: [1.0, 1.0, 1.0]
+BN:
+  USE_PRECISE_STATS: True
+  NUM_BATCHES_PRECISE: 200
+  MOMENTUM: 0.1
+  WEIGHT_DECAY: 0.0
+SOLVER:
+  BASE_LR: 1e-3 #5e-3 # 2e-4
+  LR_POLICY: simple
+  MAX_EPOCH:  20
+  # MOMENTUM: 0.9
+  WEIGHT_DECAY: 0.0 # 1e-6 #1e-5
+  # WARMUP_EPOCHS: 2
+  # WARMUP_START_LR: 3e-4
+  # WARMUP_STEPS: 1000
+  OPTIMIZING_METHOD: adam
+MODEL:
+  NUM_CLASSES: 1
+  ARCH: resnet18
+  MODEL_NAME: GN_VPN
+  LOSS_FUNC: cross_entropy # cross_entropy
+  DROPOUT_RATE: 0.5
+GN:
+  HORIZONTAL_UNITS: [[0, 3],
+                    [1, 3],
+                    [2, 3],
+                    [3, 1]]
+  TOPDOWN_UNITS: [[0, 1],
+                  [1, 1],
+                  [2, 1]]
+  # HORIZONTAL_UNITS: [[0, 3],
+  #                   [1, 3],
+  #                   [2, 3],
+  #                   [3, 3],
+  #                   [4, 1]]
+  # TOPDOWN_UNITS: [[0, 3],
+  #                 [1, 3],
+  #                 [2, 3],
+  #                 [3, 3]]
+  RECURRENT_BN: 'GN'
+  FEEDFORWARD_BN: 'GN'
+  GALA: False
+  HIDDEN_INIT: zeros
+PREDICTIVE:
+  ENABLE: True
+  CPC: True
+  CPC_FAN_OUT: 64
+  CPC_STEPS: [3, 6]
+TEST:
+  ENABLE: True
+  DATASET: Mmnist
+  BATCH_SIZE: 64
+  NUM_ENSEMBLE_VIEWS: 1
+  NUM_SPATIAL_CROPS: 1
+DATA_LOADER:
+  NUM_WORKERS: 8
+  PIN_MEMORY: True
+NUM_GPUS: 8
+NUM_SHARDS: 1
+RNG_SEED: 0
+OUTPUT_DIR: .
+SUMMARY_PERIOD: 100
+SUPERVISED: False

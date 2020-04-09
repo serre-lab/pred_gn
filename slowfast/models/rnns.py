@@ -429,7 +429,8 @@ class hConvGRUCell(nn.Module):
             r=4,
             init=nn.init.orthogonal_,
             grad_method='bptt',
-            norm='GN'):
+            norm='GN',
+            bottom_layer=False):
         super(hConvGRUCell, self).__init__()
         self.gala = False
         self.padding = kernel_size // 2
@@ -440,6 +441,10 @@ class hConvGRUCell(nn.Module):
         self.grad_method = grad_method
         self.gala = gala
         self.less_softplus = less_softplus
+        self.bottom_layer = bottom_layer
+        if "GN" in norm and input_size<=4:
+            norm = "IN"
+        
         if self.gala:
             self.u0_channel_gate_0 = nn.Conv2d(
                 hidden_size, hidden_size // r, 1)
@@ -539,12 +544,18 @@ class hConvGRUCell(nn.Module):
                 self.w_gate_inh,
                 padding=self.padding))
         if self.less_softplus:
-            inhibition = F.softplus(  # F.softplus(input_) moved outside
+            inhibition_ = F.softplus(  # F.softplus(input_) moved outside
                 input_ - c0_t * (self.alpha * h_ + self.mu))
+        elif self.bottom_layer:
+            
+            extra['inh'] = F.hardtanh(c0_t * (self.alpha * h_ + self.mu), 0, 1)
+            inhibition_ = input_ - extra['inh']
+            
         else:
             # inhibition = F.softplus(  # F.softplus(input_) moved outside
             #     F.softplus(input_) - F.softplus(c0_t * (self.alpha * h_ + self.mu)))
             inhibition_ = F.softplus(input_) - F.softplus(c0_t * (self.alpha * h_ + self.mu))
+        
 
         if 'error_' in return_extra:
             extra['error_'] = inhibition_
@@ -555,6 +566,10 @@ class hConvGRUCell(nn.Module):
             extra['error'] = inhibition
         
         g2_t = torch.sigmoid(self.u1_gate(inhibition))
+
+        if 'mix_layer' in return_extra:
+            extra['mix_layer'] = g2_t
+
         excitation = F.softplus(self.bn[1](
             F.conv2d(
                 inhibition,
@@ -564,8 +579,7 @@ class hConvGRUCell(nn.Module):
             h_t = excitation
         else:
             h_t = F.softplus(
-                self.kappa * (
-                    inhibition + excitation) + self.w * inhibition * excitation)
+                self.kappa * (inhibition + excitation) + self.w * inhibition * excitation)
         op = (1 - g2_t) * h_ + g2_t * h_t
         if extra:
             return op, extra
@@ -596,6 +610,9 @@ class tdConvGRUCell_err(nn.Module):
             gn_remap=False):
         super(tdConvGRUCell_err, self).__init__()
 
+        if "GN" in norm and fan_in<=4:
+            norm = "IN"
+        
         self.padding = kernel_size // 2
         self.input_size = fan_in
         self.hidden_size = td_fan_in
@@ -627,9 +644,6 @@ class tdConvGRUCell_err(nn.Module):
         self.mu = nn.Parameter(torch.empty((fan_in, 1, 1)))
         self.w = nn.Parameter(torch.empty((fan_in, 1, 1)))
         self.kappa = nn.Parameter(torch.empty((fan_in, 1, 1)))
-
-        if norm == "":
-            norm = 'SyncBN'
 
         self.bn = nn.ModuleList(
             [get_norm(norm, fan_in) for i in range(2)])
@@ -695,6 +709,8 @@ class tdConvGRUCell_err(nn.Module):
             extra['error'] = supp
 
         g2_t = torch.sigmoid(self.u2_gate(supp))
+        
+
         exc = self.bn[1](
             F.conv2d(
                 supp,
@@ -706,7 +722,7 @@ class tdConvGRUCell_err(nn.Module):
         op = (1 - g2_t) * lower_ + g2_t * h2_t  # noqa Note: a previous version had higher_ in place of lower_
         
         if self.spatial_transform:
-            op = self.warp(supp, op)
+            op = self.warp(inh, op)
         if extra:
             return op, extra
         else:
@@ -733,6 +749,9 @@ class tdConvGRUCell(nn.Module):
             gn_remap=False):
         super(tdConvGRUCell, self).__init__()
 
+        if "GN" in norm and fan_in<=4:
+            norm = "IN"
+        
         self.padding = kernel_size // 2
         self.input_size = fan_in
         self.hidden_size = td_fan_in
@@ -765,8 +784,7 @@ class tdConvGRUCell(nn.Module):
         self.w = nn.Parameter(torch.empty((fan_in, 1, 1)))
         self.kappa = nn.Parameter(torch.empty((fan_in, 1, 1)))
 
-        if norm == "":
-            norm = 'SyncBN'
+        
 
         self.bn = nn.ModuleList(
             [get_norm(norm, fan_in) for i in range(2)])
@@ -817,25 +835,37 @@ class tdConvGRUCell(nn.Module):
                 self.w_gate_inh,
                 padding=self.padding))
 
-        inhibition = F.softplus(
-            lower_ - F.softplus(c1_t * (self.alpha * prev_state2 + self.mu)))
+        # inhibition = F.softplus(
+        #     lower_ - F.softplus(c1_t * (self.alpha * prev_state2 + self.mu)))
+
+        inh = F.softplus(c1_t * (self.alpha * prev_state2 + self.mu))
+        
+        if 'inh' in return_extra:
+            extra['inh'] = inh
+
+        supp = F.softplus(
+            lower_ - inh)
 
         if 'error' in return_extra:
-            extra['error'] = inhibition
+            extra['error'] = supp
 
-        g2_t = torch.sigmoid(self.u2_gate(inhibition))
+        g2_t = torch.sigmoid(self.u2_gate(supp))
         excitation = self.bn[1](
             F.conv2d(
-                inhibition,
+                supp,
                 self.w_gate_exc,
                 padding=self.padding))
         h2_t = F.softplus(
             self.kappa * (
-                inhibition + excitation) + self.w * inhibition * excitation)
+                supp + excitation) + self.w * supp * excitation)
+        
         op = (1 - g2_t) * lower_ + g2_t * h2_t  # noqa Note: a previous version had higher_ in place of lower_
         
+        if 'mix_layer' in return_extra:
+            extra['mix_layer'] = g2_t
+
         if self.spatial_transform:
-            op = self.warp(inhibition, op)
+            op = self.warp(inh, op)
         if extra:
             return op, extra
         else:

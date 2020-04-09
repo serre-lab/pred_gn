@@ -68,8 +68,7 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                     
         else:
             inputs = inputs.cuda(non_blocking=True)
-        # logger.info(inputs[0].shape)
-        # sys.stdout.flush()
+        
         if len(inputs[i].shape) > 5:
             # logger.info(inputs[i].shape)
             
@@ -95,6 +94,7 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             else:
                 meta[key] = val.cuda(non_blocking=True)
 
+        
         # Update the learning rate.
         lr = optim.get_epoch_lr(cur_epoch + float(cur_iter) / data_size, global_iters, cfg)
         optim.set_lr(optimizer, lr)
@@ -107,8 +107,66 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             # Perform the forward pass.
             preds = model(inputs)
         
+        ####################################################################################################################################
+        # check activations
+        ####################################################################################################################################
+        # if writer is not None and global_iters%cfg.SUMMARY_PERIOD==0:
+            
+        #     bu_errors = preds['bu_errors']#.cpu()#.data.numpy().squeeze()
+            
+        #     for layer in range(len(bu_errors)): 
+        #         images = bu_errors[layer].transpose(1,2).transpose(0,1)
+        #         images = (images-images.min())
+        #         images = images/images.max()
+        #         images = images.reshape((-1,) + images.shape[2:])
+
+        #         # grid = tv.utils.make_grid(images, nrow=18, normalize=True)
+        #         # writer.add_image('activations/bu_error_l%d'%layer, grid, global_iters)
+
+        #         tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d_bu_errors_l%d.jpg'%(global_iters,layer)), nrow=18, normalize=True)
+            
+        #     mix_out = preds['mix_layer']#.cpu().data.numpy().squeeze()
+        #     for layer in range(len(mix_out)): 
+                
+        #         images = mix_out[layer].transpose(1,2).transpose(0,1)
+        #         images = images.reshape((-1,) + images.shape[2:])
+        #         images = (images-images.min())
+        #         images = images/images.max()
+        #         # grid = tv.utils.make_grid(images, nrow=18, normalize=True)
+        #         # writer.add_image('activations/mix_layer_l%d'%layer, grid, global_iters)
+        #         # tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'example_%d_mix_layer_l%d.jpg'%(i,layer)), nrow=18, normalize=True)
+
+        #         tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d_mix_layer_l%d.jpg'%(global_iters,layer)), nrow=18, normalize=True)
+            
+        #     inhibition = preds['H_inh']#.cpu()#.data.numpy().squeeze()
+        #     for layer in range(len(inhibition)): 
+        #         images = inhibition[layer].transpose(1,2).transpose(0,1)
+        #         images = (images-images.min())
+        #         images = images/images.max()
+        #         images = images.reshape((-1,) + images.shape[2:])
+        #         # grid = tv.utils.make_grid(images, nrow=18, normalize=True)
+        #         # writer.add_image('activations/H_inh_l%d'%layer, grid, global_iters)
+        #         tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d_H_inh_l%d.jpg'%(global_iters,layer)), nrow=18, normalize=True)
+            
+
+        #     hidden = preds['hidden']#.cpu()#.data.numpy().squeeze()
+        #     for layer in range(len(hidden)): 
+        #         images = hidden[layer].transpose(1,2).transpose(0,1)
+        #         images = (images-images.min())
+        #         images = images/images.max()
+        #         images = images.reshape((-1,) + images.shape[2:])
+        #         # grid = tv.utils.make_grid(images, nrow=18, normalize=True)
+        #         # writer.add_image('activations/hidden_l%d'%layer, grid, global_iters)
+        #         tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d_hidden_l%d.jpg'%(global_iters,layer)), nrow=18, normalize=True)
+            
+                
+        out_keys = preds.keys()
         if cfg.PREDICTIVE.ENABLE:
+
             errors = preds['pred_errors']
+            if 'frame_errors' in preds:
+                frame_errors = preds['frame_errors']
+
 
         if cfg.PREDICTIVE.CPC:
             cpc_loss = preds['cpc_loss']
@@ -119,10 +177,13 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
 
         total_loss = 0
         if cfg.PREDICTIVE.ENABLE:
+            
             pred_loss = errors.mean()
             total_loss += pred_loss
+            if 'frame_errors' in out_keys:
+                total_loss += frame_errors
             # copy_baseline = F.smooth_l1_loss(inputs[i][:,:,1:] - inputs[i][:,:,:-1], torch.zeros_like(inputs[i][:,:,1:]))
-            copy_baseline = F.l1_loss(inputs[i][:,:,1:] - inputs[i][:,:,:-1], torch.zeros_like(inputs[i][:,:,1:]))
+            # copy_baseline = F.l1_loss(inputs[i][:,:,1:] - inputs[i][:,:,:-1], torch.zeros_like(inputs[i][:,:,1:]))
             
         if cfg.PREDICTIVE.CPC:
             total_loss += cpc_loss
@@ -148,12 +209,12 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
         ####################################################################################################################################
         # check gradients
         ####################################################################################################################################
-        if writer is not None and global_iters%cfg.SUMMARY_PERIOD==0:
+        # if writer is not None and global_iters%cfg.SUMMARY_PERIOD==0:
             
-            n_p = model.module.named_parameters() if hasattr(model,'module') else model.named_parameters()
-            fig = viz_helpers.plot_grad_flow_v2(n_p)
-            writer.add_figure('grad_flow/grad_flow', fig, global_iters)
-            
+        #     n_p = model.module.named_parameters() if hasattr(model,'module') else model.named_parameters()
+        #     fig = viz_helpers.plot_grad_flow_v2(n_p)
+        #     writer.add_figure('grad_flow/grad_flow', fig, global_iters)
+
         optimizer.step()
 
         if cfg.DETECTION.ENABLE:
@@ -178,8 +239,11 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 if cfg.PREDICTIVE.ENABLE:
                     pred_loss = du.all_reduce([pred_loss])
                     pred_loss = pred_loss[0]
-                    copy_baseline = du.all_reduce([copy_baseline])
-                    copy_baseline = copy_baseline[0]
+                    if 'frame_errors' in out_keys:
+                        frame_errors = du.all_reduce([frame_errors])[0]
+                        
+                    # copy_baseline = du.all_reduce([copy_baseline])
+                    # copy_baseline = copy_baseline[0]
 
                 if cfg.PREDICTIVE.CPC:
                     cpc_loss = du.all_reduce([cpc_loss])
@@ -191,8 +255,11 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             if cfg.PREDICTIVE.ENABLE:
                 pred_loss = pred_loss.item()
                 loss_logs['loss_pred']= pred_loss
-                copy_baseline = copy_baseline.item()
-                loss_logs['copy_comp'] = copy_baseline
+                if 'frame_errors' in out_keys:
+                    frame_errors = frame_errors.item()
+                    loss_logs['frame_errors']= frame_errors 
+                # copy_baseline = copy_baseline.item()
+                # loss_logs['copy_comp'] = copy_baseline
             if cfg.PREDICTIVE.CPC:
                 cpc_loss = cpc_loss.item()
                 loss_logs['loss_cpc']= cpc_loss
@@ -223,13 +290,15 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 # writer.add_scalar('loss/top5_err', train_meter.mb_top5_err.get_win_median(), global_iters)
                 # writer.add_scalar('loss/loss', train_meter.loss.get_win_median(), global_iters)
             if global_iters%cfg.SUMMARY_PERIOD==0 and du.get_rank()==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS):
-                n_rows = 17
+                
                 with torch.no_grad():
                     # logger.info(inputs[i].shape)
                     # sys.stdout.flush()
                     inputs[0] = inputs[0][:min(3,len(inputs[0]))] 
                     frames = model(inputs, extra=['frames'], autoreg=True)['frames']
-                    
+
+                    n_rows = inputs[0].size(2)-1
+
                     inputs = inputs[0].transpose(1,2)[:, -n_rows:]
                     frames = frames.transpose(1,2)[:, -n_rows:]
 
@@ -242,9 +311,9 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 
                 tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'preds_%d.jpg'%global_iters), nrow=n_rows, normalize=True)
                 
-                del images
-                del frames
-                del inputs
+                # del images
+                # del frames
+                # del inputs
                 
         train_meter.log_iter_stats(cur_epoch, cur_iter)
         train_meter.iter_tic()

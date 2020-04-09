@@ -6,6 +6,7 @@ import torch
 import torchvision as tv
 
 import slowfast.utils.checkpoint as cu
+import slowfast.utils.distributed as du
 import slowfast.utils.multiprocessing as mpu
 from slowfast.config.defaults import get_cfg
 
@@ -15,6 +16,8 @@ import torch
 from slowfast.datasets import loader
 from slowfast.datasets.build import build_dataset
 import slowfast.utils.logging as logging
+
+from slowfast.models import build_model
 
 from PIL import Image
 
@@ -113,7 +116,7 @@ def visualize(cfg):
     """
 
     # Setup logging format.
-    logging.setup_logging()
+    logging.setup_logging(cfg)
 
     # Print config.
     logger.info("Train with config:")
@@ -168,6 +171,144 @@ def visualize(cfg):
         #         im.save(os.path.join(cfg.OUTPUT_DIR,'example_%d_aug%d_frame_%d.png'%(i,a,s)))
 
 
+def visualize_activations(cfg):
+    """
+    Train a video model for many epochs on train set and evaluate it on val set.
+    Args:
+        cfg (CfgNode): configs. Details can be found in
+            slowfast/config/defaults.py
+    """
+
+    # Setup logging format.
+    logging.setup_logging(cfg)
+
+    # Print config.
+    logger.info("Vizualize activations")
+    # logger.info(pprint.pformat(cfg))
+
+    # Build the video model and print model statistics.
+    model = build_model(cfg)
+    # Construct the optimizer.
+    # optimizer = optim.construct_optimizer(model, cfg)
+
+    logger.info("Load from given checkpoint file.")
+    checkpoint_epoch = cu.load_checkpoint(
+        cfg.TRAIN.CHECKPOINT_FILE_PATH,
+        model,
+        cfg.NUM_GPUS > 1,
+        optimizer=None,
+        inflation=cfg.TRAIN.CHECKPOINT_INFLATE,
+        convert_from_caffe2=cfg.TRAIN.CHECKPOINT_TYPE == "caffe2",
+    )
+
+    # if du.is_master_proc():
+    #     misc.log_model_info(model, cfg, is_train=True)
+
+    # Create the video train and val loaders.
+    # train_loader = loader.construct_loader(cfg, "train")
+    # val_loader = loader.construct_loader(cfg, "val")
+
+    train_set = build_dataset(cfg.TEST.DATASET, cfg, "train")
+
+    
+
+    for i in np.random.choice(len(train_set), 5):
+        
+        # frames, label, _, _ = train_set.get_augmented_examples(i)
+        frames, label, _, _ = train_set[i]
+        inputs = frames
+        inputs[0] = inputs[0][None,:]
+        logger.info(frames[0].shape)
+        # frames = frames[0].permute(0,2,3,4,1)
+        frames = frames[0].squeeze().transpose(0,1)#.permute(1,2,3,0)
+        logger.info(frames.shape)
+        tv.utils.save_image(frames, os.path.join(cfg.OUTPUT_DIR, 'example_%d.jpg'%i), nrow=18, normalize=True)
+        
+        for j in range(len(inputs)):
+            inputs[j] = inputs[j].cuda(non_blocking=True)
+        with torch.no_grad():
+            # logger.info(inputs[i].shape)
+            # sys.stdout.flush()
+            inputs[0] = inputs[0][:min(3,len(inputs[0]))] 
+            output = model(inputs, extra=['frames'])
+            
+            # frames = frames[0].transpose(0,1)#.permute(1,2,3,0)
+            # tv.utils.save_image(frames, os.path.join(cfg.OUTPUT_DIR, 'example_target_%d.jpg'%i), nrow=18, normalize=True)
+            
+            input_aug = output['input_aug']
+            logger.info(input_aug.shape)
+
+            input_aug = input_aug[0].transpose(0,1)
+            tv.utils.save_image(input_aug, os.path.join(cfg.OUTPUT_DIR, 'example_input_%d.jpg'%i), nrow=18, normalize=True)
+            
+
+            # mix_layer [1, timesteps, layers, activations]
+            mix_out = output['mix_layer']#.cpu().data.numpy().squeeze()
+            for layer in range(len(mix_out)): 
+                logger.info('mix layer %d'%layer)
+                logger.info(mix_out[layer].view([18,-1]).mean(1))
+                images = mix_out[layer].transpose(1,2).transpose(0,1)
+                logger.info(images.shape)
+                images = images.reshape((-1,) + images.shape[2:])
+                images = (images-images.min())
+                images = images/images.max()
+                tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'example_%d_mix_layer_l%d.jpg'%(i,layer)), nrow=18, normalize=True)
+
+
+            # BU errors per timestep per layer (choose a random activation or the mean) also write out the mean/norm
+            # [1, timesteps, layers, channels, height, width]
+            
+            bu_errors = output['bu_errors']#.cpu()#.data.numpy().squeeze()
+            
+            for layer in range(len(bu_errors)): 
+                images = bu_errors[layer].transpose(1,2).transpose(0,1)
+                images = (images-images.min())
+                images = images/images.max()
+                logger.info(images.shape)
+                images = images.reshape((-1,) + images.shape[2:])
+                tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'example_%d_bu_errors_l%d.jpg'%(i,layer)), nrow=18, normalize=True)
+
+
+            # horiz inhibition per timestep per layer (choose a random activation or the mean) also write out the mean/norm
+            # [1, timesteps, layers, channels, height, width]
+            inhibition = output['H_inh']#.cpu()#.data.numpy().squeeze()
+            for layer in range(len(inhibition)): 
+                images = inhibition[layer].transpose(1,2).transpose(0,1)
+                images = (images-images.min())
+                images = images/images.max()
+                logger.info(images.shape)
+                images = images.reshape((-1,) + images.shape[2:])
+
+                tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'example_%d_H_inh_l%d.jpg'%(i,layer)), nrow=18, normalize=True)
+
+            # persistent state in between timesteps
+            # [1, timesteps, layers, channels, height, width]
+            hidden = output['hidden']#.cpu()#.data.numpy().squeeze()
+            for layer in range(len(hidden)): 
+                images = hidden[layer].transpose(1,2).transpose(0,1)
+                images = (images-images.min())
+                images = images/images.max()
+                logger.info(images.shape)
+                images = images.reshape((-1,) + images.shape[2:])
+
+                tv.utils.save_image(images, os.path.join(cfg.OUTPUT_DIR, 'example_%d_hidden_l%d.jpg'%(i,layer)), nrow=18, normalize=True)
+
+
+            # inputs = inputs[0].transpose(1,2)[:, -n_rows:]
+            # frames = frames.transpose(1,2)[:, -n_rows:]
+
+            # images = torch.cat([inputs, frames], 1).reshape((-1,) + inputs.shape[2:]) 
+        
+        # grid = tv.utils.make_grid(images, nrow=8, normalize=True)
+        # writer.add_image('predictions', images, global_iters)
+        
+        
+        # for a in range(frames.size(0)):
+        #     for s in range(frames.size(1)):
+                
+        #         im = Image.fromarray((frames[a,s].data.numpy()*255).astype(np.uint8))
+        #         im.save(os.path.join(cfg.OUTPUT_DIR,'example_%d_aug%d_frame_%d.png'%(i,a,s)))
+
 
 def main():
     """
@@ -177,6 +318,7 @@ def main():
     cfg = load_config(args)
 
     visualize(cfg=cfg)
+    # visualize_activations(cfg=cfg)
 
 
 if __name__ == "__main__":

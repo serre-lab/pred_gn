@@ -150,6 +150,7 @@ def get_norm(norm, out_channels):
             "SyncBN2D": NaiveSyncBatchNorm2d,
             "FrozenBN": FrozenBatchNorm2d,
             "GN": lambda channels: nn.GroupNorm(4, channels),
+            "IN": lambda channels: nn.InstanceNorm2d(channels, affine=True),
             "GNR": lambda channels: GroupNorm(4, channels, momentum=0.1, affine=True, track_running_stats=True),
             "nnSyncBN": nn.SyncBatchNorm,  # keep for debugging
         }[norm]
@@ -249,12 +250,18 @@ class GroupNorm(_InstanceNorm):
     def __init__(self, num_groups, num_features, eps=1e-5, momentum=0.1, affine=False,
                  track_running_stats=False):
         
-        
         super(GroupNorm, self).__init__(
             num_features, eps, momentum, affine, track_running_stats)
+
+        if num_features%num_groups != 0:
+            raise ValueError('number of input channels {} is not a multiple of the number of groups {}'.format(num_features,num_groups))
+
         self.num_groups = num_groups
+        
         del self.running_mean
         del self.running_var
+
+        
 
     # def _check_input_dim(self, input):
     #     raise NotImplementedError

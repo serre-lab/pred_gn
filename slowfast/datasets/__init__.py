@@ -7,3 +7,4 @@ from .kinetics import Kinetics  # noqa
 from .hmdb51 import Hmdb51  # noqa
 from .moments import Moments
 from .intphys import Intphys
+from .mmnist import Mmnist

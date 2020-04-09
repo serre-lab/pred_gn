@@ -429,6 +429,7 @@ class Intphys(data.Dataset):
                 max_size=self._jitter_max_scale,
                 # boxes=boxes,
             )
+
             imgs, _ = transform.random_crop(
                 imgs, self._crop_size # , boxes=boxes
             )

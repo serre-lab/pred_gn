@@ -2,20 +2,20 @@ TRAIN:
   ENABLE: True
   DATASET: IntPhys
   BATCH_SIZE: 64
-  EVAL_PERIOD: 10
+  EVAL_PERIOD: 100
   CHECKPOINT_PERIOD: 1
   AUTO_RESUME: True
 DATA:
   NUM_FRAMES: 18
   SAMPLING_RATE: 2
-  TRAIN_JITTER_SCALES: [256, 320]
-  TRAIN_CROP_SIZE: 224
-  TEST_CROP_SIZE: 256
+  TRAIN_JITTER_SCALES: [96, 96]
+  TRAIN_CROP_SIZE: 96
+  TEST_CROP_SIZE: 96
   INPUT_CHANNEL_NUM: [3]
   PATH_TO_DATA_DIR: /users/azerroug/data/azerroug/intphys/train
   MEAN: [0.0, 0.0, 0.0]
   STD: [1.0, 1.0, 1.0]
-  COLOR_AUGMENTATION: True # True
+  COLOR_AUGMENTATION: False # True
 RESNET:
   SHORTCUT_TYPE: 'B'
 BN:
@@ -28,11 +28,10 @@ SOLVER:
   LR_POLICY: simple
   MAX_EPOCH:  20
   # MOMENTUM: 0.9
-  WEIGHT_DECAY: 1e-6 #1e-5
+  WEIGHT_DECAY: 0.0 # 1e-6 #1e-5
   # WARMUP_EPOCHS: 2
-  # WARMUP_START_LR: 0.01
-  # WARMUP_START_LR: 1e-4
-  # WARMUP_STEPS: 10000
+  # WARMUP_START_LR: 3e-4
+  # WARMUP_STEPS: 1000
   OPTIMIZING_METHOD: adam
 MODEL:
   NUM_CLASSES: 1
@@ -41,22 +40,22 @@ MODEL:
   LOSS_FUNC: cross_entropy # cross_entropy
   DROPOUT_RATE: 0.5
 GN:
-  # HORIZONTAL_UNITS: [[0, 3],
-  #                   [1, 3],
-  #                   [2, 3],
-  #                   [3, 1]]
-  # TOPDOWN_UNITS: [[0, 1],
-  #                 [1, 1],
-  #                 [2, 1]]
   HORIZONTAL_UNITS: [[0, 3],
                     [1, 3],
                     [2, 3],
-                    [3, 3],
-                    [4, 1]]
+                    [3, 1]]
   TOPDOWN_UNITS: [[0, 1],
                   [1, 1],
-                  [2, 1],
-                  [3, 1]]
+                  [2, 1]]
+  # HORIZONTAL_UNITS: [[0, 3],
+  #                   [1, 3],
+  #                   [2, 3],
+  #                   [3, 3],
+  #                   [4, 1]]
+  # TOPDOWN_UNITS: [[0, 3],
+  #                 [1, 3],
+  #                 [2, 3],
+  #                 [3, 3]]
   RECURRENT_BN: 'GNR'
   FEEDFORWARD_BN: 'GNR'
   GALA: False
