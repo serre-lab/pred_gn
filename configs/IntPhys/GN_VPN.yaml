@@ -15,7 +15,7 @@ DATA:
   PATH_TO_DATA_DIR: /users/azerroug/data/azerroug/intphys/train
   MEAN: [0.0, 0.0, 0.0]
   STD: [1.0, 1.0, 1.0]
-  COLOR_AUGMENTATION: False # True
+  COLOR_AUGMENTATION: False
 RESNET:
   SHORTCUT_TYPE: 'B'
 BN:

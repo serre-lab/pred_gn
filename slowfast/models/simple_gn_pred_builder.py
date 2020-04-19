@@ -6,29 +6,25 @@ from torch.nn import init
 
 from functools import partial
 
-# from layers.fgru_base import fGRUCell2 as fGRUCell
-# from layers.fgru_base import fGRUCell2_td as fGRUCell_td
-
 import numpy as np
 import fvcore.nn.weight_init as weight_init
-import torch
-import torch.nn.functional as F
-from torch import nn
 
 from .batch_norm import get_norm, GroupNorm
 
 from .rnns import hConvGRUCell, tdConvGRUCell, tdConvGRUCell_err, CBP_penalty
 
 
-from .gn_helper import  TemporalCausalConv3d, \
-                        BasicBlock, \
-                        Bottleneck, \
-                        BasicStem, \
-                        ResNetSimpleHead, \
-                        SpatialTransformer, \
-                        conv1x3x3, \
-                        downsample_basic_block
-                        
+# from .gn_helper import  TemporalCausalConv3d, \
+#                         BasicBlock, \
+#                         Bottleneck, \
+#                         BasicStem, \
+#                         ResNetSimpleHead, \
+#                         SpatialTransformer, \
+#                         conv1x3x3, \
+#                         downsample_basic_block
+
+from .gn_helper import  ResNetSimpleHead
+
 import kornia
 import slowfast.utils.logging as logging
 
@@ -74,9 +70,9 @@ class GN_PRED(nn.Module):
         self.td_units = td_units
 
         self.cbp_penalty = True
-        self.rnn_norm = True
         self.cbp_cutoff = 0.9
         self.cbp_penalty_weight = 5e-6
+        self.rnn_norm = True
         self.warp_td = False
         self.pixel_loss = F.l1_loss
 
@@ -475,10 +471,9 @@ class SpatialTransformer(nn.Module):
 
         
         self.loc = nn.Sequential(
-            nn.Conv2d(fan_in, 64, kernel_size=5, bias=False),
+            nn.Conv2d(fan_in, 32, kernel_size=3, padding=1, bias=False),
             #nn.MaxPool2d(2, stride=2),
             nn.ReLU(True),
-            nn.Conv2d(64, 32, kernel_size=3),
         )
 
         # Regressor for the 3 * 2 affine matrix
@@ -488,31 +483,13 @@ class SpatialTransformer(nn.Module):
             nn.Linear(256, 3 * 2)
         )
         
-        # self.loc = nn.Sequential(
-        #     nn.Conv2d(fan_in, 64, kernel_size=5, bias=False),
-        #     #nn.MaxPool2d(2, stride=2),
-        #     nn.ReLU(True),
-        #     nn.Conv2d(64, 32, kernel_size=3),
-        # )
-
-        # # Regressor for the 3 * 2 affine matrix
-        # self.fc_loc = nn.Sequential(
-        #     nn.Linear(32, 32),
-        #     nn.ReLU(True),
-        #     nn.Linear(32, 3 * 2)
-        # )
-
         # Initialize the weights/bias with identity transformation
         nn.init.xavier_normal_(self.loc[0].weight)
         if self.loc[0].bias is not None:
             self.loc[0].bias.data.zero_()
         
-        nn.init.xavier_normal_(self.loc[2].weight)
-        if self.loc[2].bias is not None:
-            self.loc[2].bias.data.zero_()
-
-        nn.init.xavier_normal_(self.fc_loc[0])
-        self.fc_loc[2].bias.data.zero_()
+        nn.init.xavier_normal_(self.fc_loc[0].weight)
+        self.fc_loc[0].bias.data.zero_()
         
         self.fc_loc[2].weight.data.zero_()
         self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
@@ -522,11 +499,10 @@ class SpatialTransformer(nn.Module):
         if input_trans == None:
             input_trans = x 
         xs = self.loc(x)
-        # xs = F.relu(F.max_pool2d(xs, kernel_size=xs.size()[2:]))
 
         xs = F.relu(F.adaptive_max_pool2d(xs, output_size=(4,4)))
 
-        xs = xs.view(-1, xs.shape[1]*4*4)
+        xs = xs.view(xs.shape[0], -1)
         theta = self.fc_loc(xs)
         theta = theta.view(-1, 2, 3)
 

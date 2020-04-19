@@ -25,7 +25,6 @@ from .gn_helper import  TemporalCausalConv3d, \
                         Bottleneck, \
                         BasicStem, \
                         ResNetSimpleHead, \
-                        SpatialTransformer, \
                         conv1x3x3, \
                         downsample_basic_block
                         
@@ -429,27 +428,74 @@ def intersectionAndUnion(imPred, imLab, numClass):
 
 
 # differentiable warping + feature transformation
+# class SpatialTransformer(nn.Module):
+#     def __init__(self, fan_in):
+#         super(SpatialTransformer, self).__init__()
+
+#         # Spatial transformer localization-network
+
+#         self.loc = nn.Sequential(
+#             nn.Conv2d(fan_in, 64, kernel_size=5),
+#             #nn.MaxPool2d(2, stride=2),
+#             nn.ReLU(True),
+#             nn.Conv2d(64, 32, kernel_size=3),
+#         )
+
+#         # Regressor for the 3 * 2 affine matrix
+#         self.fc_loc = nn.Sequential(
+#             nn.Linear(32, 32),
+#             nn.ReLU(True),
+#             nn.Linear(32, 3 * 2)
+#         )
+
+#         # Initialize the weights/bias with identity transformation
+#         self.fc_loc[2].weight.data.zero_()
+#         self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+
+#     # Spatial transformer network forward function
+#     def forward(self, x, input_trans=None):
+#         if input_trans == None:
+#             input_trans = x 
+#         xs = self.loc(x)
+#         xs = F.relu(F.max_pool2d(xs, kernel_size=xs.size()[2:]))
+
+#         xs = xs.view(-1, xs.shape[1])
+#         theta = self.fc_loc(xs)
+#         theta = theta.view(-1, 2, 3)
+
+#         grid = F.affine_grid(theta, input_trans.size(), align_corners=True)
+#         x = F.grid_sample(input_trans, grid, align_corners=True)
+
+#         return x
+
 class SpatialTransformer(nn.Module):
     def __init__(self, fan_in):
         super(SpatialTransformer, self).__init__()
 
         # Spatial transformer localization-network
 
+        
         self.loc = nn.Sequential(
-            nn.Conv2d(fan_in, 64, kernel_size=5),
+            nn.Conv2d(fan_in, 32, kernel_size=3, padding=1, bias=False),
             #nn.MaxPool2d(2, stride=2),
             nn.ReLU(True),
-            nn.Conv2d(64, 32, kernel_size=3),
         )
 
         # Regressor for the 3 * 2 affine matrix
         self.fc_loc = nn.Sequential(
-            nn.Linear(32, 32),
+            nn.Linear(32*4*4, 256),
             nn.ReLU(True),
-            nn.Linear(32, 3 * 2)
+            nn.Linear(256, 3 * 2)
         )
-
+        
         # Initialize the weights/bias with identity transformation
+        nn.init.xavier_normal_(self.loc[0].weight)
+        if self.loc[0].bias is not None:
+            self.loc[0].bias.data.zero_()
+        
+        nn.init.xavier_normal_(self.fc_loc[0].weight)
+        self.fc_loc[0].bias.data.zero_()
+        
         self.fc_loc[2].weight.data.zero_()
         self.fc_loc[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
 
@@ -458,9 +504,10 @@ class SpatialTransformer(nn.Module):
         if input_trans == None:
             input_trans = x 
         xs = self.loc(x)
-        xs = F.relu(F.max_pool2d(xs, kernel_size=xs.size()[2:]))
 
-        xs = xs.view(-1, xs.shape[1])
+        xs = F.relu(F.adaptive_max_pool2d(xs, output_size=(4,4)))
+
+        xs = xs.view(xs.shape[0], -1)
         theta = self.fc_loc(xs)
         theta = theta.view(-1, 2, 3)
 
