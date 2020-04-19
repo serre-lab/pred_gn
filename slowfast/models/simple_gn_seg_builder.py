@@ -261,37 +261,14 @@ class GN_SEG(nn.Module):
         output = {}
 
         # if 'input_aug' in extra:
-        # output['input_aug'] = aug_inputs
-        
-        ##########################################################################################
-        ### hidden init
-        
-        # self.stem
-        # x = self.stem(conv_input[:,:,0])
-        
-        # x = F.softplus(torch.zeros_like(x))
-        # for j, (h_unit, h_name) in enumerate(self.h_units_and_names):
-        #     hidden_states[h_name] = x
-        #     if j < len(self.h_units_and_names)-1:
-        #         x = F.softplus(torch.zeros_like(self.feedforward_units[j](x)))
+            # output['input_aug'] = aug_inputs
 
         ##########################################################################################
         # gammanet loop
 
         for i in range(timesteps):
             
-
-            # if autoreg and i>timesteps//2:
-            #     x = frame
-            # else:
-            
             x = conv_input[:,:,i]
-
-            # if autoreg and i>timesteps//2:
-            #     x = frame - frame
-            # else:
-            #     x = conv_input[:,:,i] - frame
-
             
             x = self.stem(x)
 

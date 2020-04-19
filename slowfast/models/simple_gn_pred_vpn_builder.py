@@ -45,18 +45,6 @@ class GN_VPN(nn.Module):
     
     def __init__(self, cfg):
         super(GN_VPN, self).__init__()
-        # should include temporal kernel and temporal stride causal padding option 
-        # __RESNET_PARAMS__ = {
-        #     'resnet10': ['BasicBlock', [[1,64], [1,128], [1,256], [1,512]]],
-        #     'resnet18': ['BasicBlock', [[2,64], [2,128], [2,256], [2,512]]],
-        #     'resnet34': ['BasicBlock', [[3,64], [4,128], [6,256], [3,512]]],
-        #     'resnet50': ['Bottleneck', [[3,64], [4,128], [6,256], [3,512]]],
-        #     'resnet101': ['Bottleneck', [[3,64], [4,128], [23,256], [3,512]]], 
-        #     'resnet152': ['Bottleneck', [[3,64], [4,128], [23,256], [3,512]]], ###### fix resnet 152
-        #     'resnet200': ['Bottleneck', [[3,64], [4,128], [23,256], [3,512]]]
-        # }
-        ########################################################
-        # variables
         
         num_classes = cfg.MODEL.NUM_CLASSES
         dropout_rate = cfg.MODEL.DROPOUT_RATE
@@ -91,38 +79,9 @@ class GN_VPN(nn.Module):
         h_locations = [h[0] for h in h_units]
         for td in td_units:
             assert td[0] in h_locations, 'no horizontal location found for td location' 
-
-
         
-        # self.color_aug = kornia.augmentation.ColorJitter(brightness= 0.05, contrast= 0.05, saturation = 0.05, hue = 0.05)
-        # self.affine_aug = kornia.augmentation.RandomAffine(degrees=(-5,5), translate=(2/224,2/224), scale=(0.95, 1.05), shear=(-1,1))
         self.color_aug = kornia.augmentation.ColorJitter(brightness= 0.1, contrast= 0.1, saturation = 0.1, hue = 0.2, return_transform=True)
         self.affine_aug = kornia.augmentation.RandomAffine(degrees=(-3,3), translate=(5/224,5/224), scale=(0.9, 1.1), shear=(-0.02,0.02), return_transform=True)
-
-        # self._strides = [1]
-        # self._out_feature_channels =[3]
-        
-        # self.inplanes = 3
-
-        # self.stages_and_names = []
-        # fan_in = stem_fan_out
-        # for i, stage in enumerate(stages):
-        #     n_blocks, fan_out = stage
-        #     # stride = 1 if i==0 else 2
-                
-        #     stage_seq = nn.Sequential(
-        #         nn.Conv2d(fan_in, fan_out, 3, stride=1, padding=1),
-        #         nn.MaxPool2d(2)
-        #     )
-            
-        #     name = "res" + str(i + 1)
-        #     self.add_module(name, stage_seq)
-        #     self.stages_and_names.append((stage_seq, name))
-
-        #     self.inplanes = fan_out
-        #     fan_in = self.inplanes
-        #     self._out_feature_channels.append(self.inplanes)
-        #     self._strides.append(self._strides[-1]*2)
         
         ### small expansion of the image
         self.stem = nn.Conv2d(3,8,3,padding=1)
@@ -270,30 +229,22 @@ class GN_VPN(nn.Module):
         
         timesteps = inputs_.size(2)
 
-        if self.training:
-            o_ ,aug_c = self.color_aug(inputs_[:,:,0])
-            o_ ,aug_a = self.affine_aug(o_)
-            # tr = kornia.linalg.compose_transformations(aug_c, aug_a)
-            aug_inputs.append(o_)
+        # if self.training:
+        #     o_ ,aug_c = self.color_aug(inputs_[:,:,0])
+        #     o_ ,aug_a = self.affine_aug(o_)
+        #     aug_inputs.append(o_)
 
-            for i in range(1,inputs_.shape[2]):
-                #aug_inputs.append(kornia.warp_perspective(inputs_[:,:,i], tr, dsize=inputs_.shape[-2:]))
-                o_ = self.affine_aug(self.color_aug(inputs_[:,:,i], params=aug_c)[0], params=aug_a)[0]
-                # o_ ,aug_a = self.affine_aug(o_, params=aug_a)
-                aug_inputs.append(o_)
-            aug_inputs = torch.stack(aug_inputs, 2)
+        #     for i in range(1,inputs_.shape[2]):
+        #         o_ = self.affine_aug(self.color_aug(inputs_[:,:,i], params=aug_c)[0], params=aug_a)[0]
+        #         aug_inputs.append(o_)
+        #     aug_inputs = torch.stack(aug_inputs, 2)
 
-            # for i in range(inputs_.shape[0]):
-            #     aug_inputs.append(self.affine_aug(self.color_aug(inputs_[i].transpose(0,1))).transpose(0,1))
-                
-            #     # b = kornia.warp_perspective(a, tr_c, dsize=a.shape[-2:])
-            #     # c = kornia.warp_perspective(b, tr_a, dsize=a.shape[-2:])
-            # aug_inputs = torch.stack(aug_inputs, 0)
-        else:
-            aug_inputs = inputs_
+        # else:
+        #     aug_inputs = inputs_
 
+        # conv_input = aug_inputs
         
-        conv_input = aug_inputs
+        conv_input = inputs_
 
         current_loc = self.h_units[0][0]
 
@@ -316,58 +267,8 @@ class GN_VPN(nn.Module):
         output = {}
 
         # if 'input_aug' in extra:
-        output['input_aug'] = aug_inputs
+            # output['input_aug'] = aug_inputs
         
-        ##########################################################################################
-        # learned initialization
-
-        if self.hidden_init=='learned':
-            # h_unit, h_name =  self.h_units_and_names[-1]
-            # # x = torch.zeros_like(conv_input[:,:,0])[:,:,None]
-            # x = inputs_.new(torch.zeros([inputs_.shape[0],
-            #                        self._out_feature_channels[-1],  
-            #                        1,    
-            #                         inputs_.shape[3]//self._strides[-1], 
-            #                         inputs_.shape[4]//self._strides[-1]]))
-            # hidden_states[h_name] = x #torch.zeros_like(x)
-            
-            # hidden_states[h_name] = h_unit(x, hidden_states[h_name], timestep=0, return_extra=[])
-            
-            # x = hidden_states[h_name]
-
-            x = torch.zeros_like(conv_input[:,:,0])
-            current_loc = self.h_units[0][0]
-            for j, (h_unit, h_name) in enumerate(self.h_units_and_names):
-                loc = int(h_name.strip('horizontal'))
-                
-                if j > 0:
-                    # x = self.ds_block(x[:,:,None], current_loc, loc).squeeze(2)
-                    x = self.ds_block(x, current_loc, loc)
-                
-                hidden_states[h_name] = F.softplus(torch.zeros_like(x))
-                
-                hidden_states[h_name], extra_h = h_unit(F.softplus(x), hidden_states[h_name], timestep=0, return_extra=['error'])
-                bu_errors[h_name] = extra_h['error']
-                x = hidden_states[h_name]
-
-                # x = F.relu_(x)
-            
-                current_loc = loc
-            
-            for j, (td_unit, td_name) in enumerate(self.td_units_and_names):
-                loc = int(td_name.strip('topdown'))
-                h_name = 'horizontal'+str(loc)
-                # print(x.shape)
-                
-                # hidden_states[h_name] = x.new(torch.zeros([x.shape[0],
-                #                    self._out_feature_channels[loc],  
-                #                    1,    
-                #                     inputs_.shape[3]//self._strides[loc], 
-                #                     inputs_.shape[4]//self._strides[loc]]))
-        
-                hidden_states[h_name], extra_td = td_unit(hidden_states[h_name], x, timestep=0, return_extra=['error'])
-                x = extra_td['error']
-
         ##########################################################################################
         # gammanet loop
 
@@ -413,10 +314,6 @@ class GN_VPN(nn.Module):
                 # x = hidden_states[h_name]
                 ### E is passed up
                 x = bu_errors[h_name]
-
-                # if (x>10000).any():
-                #     logger.info('variable %s at timestep %d out of bound'%(h_name,i))
-                # x = F.relu_(x)
                 
                 if j < len(self.h_units_and_names)-1:
                     x = self.feedforward_units[j](x)
@@ -456,8 +353,6 @@ class GN_VPN(nn.Module):
                     # hidden_states[h_name] = td_unit(hidden_states[h_name], x, F.softplus(bu_errors[h_name]), timestep=i)
                     # x = hidden_states[h_name]
                     
-                    # if (x>1e6).any():
-                    #     logger.info('variable %s at timestep %d out of bound: %f'%(h_name,i, x.max().item()))
 
                 if self.pred_gn:
                     # frame = self.final_remap(x)
@@ -503,9 +398,7 @@ class GN_VPN(nn.Module):
         if self.run_classification:
             logits = self.head(hidden_states[self.h_units_and_names[-1][1]][:,:,None].detach()) 
             output['logits'] = logits
-        # del hidden_states
-        # del conv_input
-        # del x
+
         if self.pred_gn:
             output['pred_errors'] = errors / (timesteps-1)
             if 'frames' in extra:
@@ -551,12 +444,6 @@ class GN_VPN(nn.Module):
         # 'cpc_loss': cpc_loss, 
         # 'pred_errors': errors}
         return output
-
-    def ds_block(self, x, loc_in, loc_out):
-        for loc in range(loc_in, loc_out):
-            x = self.stages_and_names[loc][0](x)
-        
-        return x
             
 
 # differentiable warping + feature transformation
