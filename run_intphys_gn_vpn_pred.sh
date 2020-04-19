@@ -20,10 +20,10 @@ EXP_NAME="GN_IntPhys"
 # all config options are in configs/{dataset}/{cfg}.yaml
 CONFIG="configs/IntPhys/GN_VPN.yaml"
 
-NUM_GPUS=2
+NUM_GPUS=5
 
 # number of training video frames, the total number of frames is 100 for IntPhys 
-NUM_FRAMES=20
+NUM_FRAMES=50
 SAMPLING_RATE=2
 
 BASE_LR=1e-3 
