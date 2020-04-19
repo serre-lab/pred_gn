@@ -3,6 +3,7 @@ import argparse
 import sys
 import torch
 
+from torch.nn import functional as F
 import torchvision as tv
 
 import slowfast.utils.checkpoint as cu
@@ -20,6 +21,8 @@ import slowfast.utils.logging as logging
 from slowfast.models import build_model
 
 from PIL import Image
+
+
 
 import os
 
@@ -133,42 +136,60 @@ def visualize(cfg):
 
     train_set = build_dataset(cfg.TEST.DATASET, cfg, "train")
 
-    for i in np.random.choice(len(train_set), 5):
-        
+    for i in np.random.choice(len(train_set), 100):
+        i = 14693
         # frames, label, _, _ = train_set.get_augmented_examples(i)
-        frames, label, _, _ = train_set[i]
-        logger.info(frames[0].shape)
+        logger.info(i)
+        frames, label, _, meta = train_set[i]
+        
+        #logger.info(frames[0].shape)
+        logger.info('done')
+        
         # frames = frames[0].permute(0,2,3,4,1)
         frames = frames[0].transpose(0,1)#.permute(1,2,3,0)
-        logger.info('### Z score ##########')
-        logger.info('min')
-        logger.info(frames.min())
-        logger.info('max')
-        logger.info(frames.max())
-        logger.info('mean')
-        logger.info(frames.mean())
-        logger.info('var')
-        logger.info(frames.var())
+        # logger.info('### Z score ##########')
+        # logger.info('min')
+        # logger.info(frames.min())
+        # logger.info('max')
+        # logger.info(frames.max())
+        # logger.info('mean')
+        # logger.info(frames.mean())
+        # logger.info('var')
+        # logger.info(frames.var())
         
         frames = frames * torch.tensor(cfg.DATA.STD)[None,:,None,None] #[None,:,None,None,None]
         frames = frames + torch.tensor(cfg.DATA.MEAN)[None,:,None,None] #[None,:,None,None,None]
-
-        logger.info('### normal ##########')
-        logger.info('min')
-        logger.info(frames.min())
-        logger.info('max')
-        logger.info(frames.max())
-        logger.info('mean')
-        logger.info(frames.mean())
-        logger.info('var')
-        logger.info(frames.var())
         
-        tv.utils.save_image(frames, os.path.join(cfg.OUTPUT_DIR, 'example_%d.jpg'%i), nrow=18, normalize=True)
-        # for a in range(frames.size(0)):
-        #     for s in range(frames.size(1)):
-                
-        #         im = Image.fromarray((frames[a,s].data.numpy()*255).astype(np.uint8))
-        #         im.save(os.path.join(cfg.OUTPUT_DIR,'example_%d_aug%d_frame_%d.png'%(i,a,s)))
+        # logger.info('### normal ##########')
+        # logger.info('min')
+        # logger.info(frames.min())
+        # logger.info('max')
+        # logger.info(frames.max())
+        # logger.info('mean')
+        # logger.info(frames.mean())
+        # logger.info('var')
+        # logger.info(frames.var())
+        masks = meta['masks'] 
+        masks = torch.cat([masks]*3, 0).transpose(0,1)/masks.max()
+        frames = frames/frames.max()
+        #images = torch.cat([frames, masks])
+
+        # tv.utils.save_image(frames, os.path.join(cfg.OUTPUT_DIR, 'example_%d.jpg'%i), nrow=frames.shape[0], normalize=True)
+        # tv.utils.save_image(masks, os.path.join(cfg.OUTPUT_DIR, 'masks_%d.jpg'%i), nrow=frames.shape[0], normalize=True)
+
+    # mse_ = []
+    # for i in range(len(train_set)):# np.random.choice(len(train_set), 5):
+    #     frames, label, _, _ = train_set[i]
+    #     mse_.append(F.mse_loss(frames[0][:,1:], frames[0][:,:-1])) 
+    #     if i%100 == 0:
+    #         logger.info(torch.Tensor(mse_).mean())
+    #         logger.info(torch.Tensor(mse_).var())
+    # mse_ = torch.Tensor(mse_)
+    
+    # logger.info('mean square error for the dataset')
+    # logger.info(mse_.mean())
+    # logger.info(mse_.var())
+    
 
 
 def visualize_activations(cfg):

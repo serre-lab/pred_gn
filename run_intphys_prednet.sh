@@ -8,7 +8,7 @@
 #SBATCH --time=48:00:00
 #SBATCH --gres=gpu:2
 #SBATCH --account=carney-tserre-condo
-#SBATCH -C v100
+#SBATCH -C quadrortx
 # SBATCH -C v100 quadrortx
 
 module load anaconda/3-5.2.0
@@ -21,7 +21,7 @@ python tools/run_net.py \
   --cfg configs/IntPhys/Prednet.yaml \
   NUM_GPUS 2 \
   DATA.NUM_FRAMES 20 \
-  TRAIN.BATCH_SIZE 100 \
+  TRAIN.BATCH_SIZE 60 \
   SOLVER.MAX_EPOCH 100 \
   PREDICTIVE.CPC False \
   DATA_LOADER.NUM_WORKERS 8 \

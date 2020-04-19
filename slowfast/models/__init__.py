@@ -10,4 +10,5 @@ from .gn_pred_builder import GN_R2D #GN_R3D_CPC
 from .gn_pred_vpn_builder import GN_R2D_VPN
 from .simple_gn_pred_vpn_builder import GN_VPN
 from .simple_gn_pred_builder import GN_PRED
+from .simple_gn_seg_builder import GN_SEG
 from .prednet import PredNet

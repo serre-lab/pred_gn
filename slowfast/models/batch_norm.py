@@ -151,7 +151,7 @@ def get_norm(norm, out_channels):
             "FrozenBN": FrozenBatchNorm2d,
             "GN": lambda channels: nn.GroupNorm(4, channels),
             "IN": lambda channels: nn.InstanceNorm2d(channels, affine=True),
-            "GNR": lambda channels: GroupNorm(4, channels, momentum=0.1, affine=True, track_running_stats=True),
+            "GNR": lambda channels: GroupNorm(channels//4, channels, momentum=0.1, affine=True, track_running_stats=True),
             "nnSyncBN": nn.SyncBatchNorm,  # keep for debugging
         }[norm]
     return norm(out_channels)
@@ -247,7 +247,7 @@ class NaiveSyncBatchNorm3d(nn.BatchNorm3d):
 
 
 class GroupNorm(_InstanceNorm):
-    def __init__(self, num_groups, num_features, eps=1e-5, momentum=0.1, affine=False,
+    def __init__(self, num_groups, num_features, eps=1e-5, momentum=0.5, affine=False,
                  track_running_stats=False):
         
         super(GroupNorm, self).__init__(

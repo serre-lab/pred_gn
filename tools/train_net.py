@@ -58,19 +58,15 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
     global_iters = data_size*cur_epoch
     for cur_iter, (inputs, labels, _, meta) in enumerate(train_loader):
 
-        # 3450
-        
         # Transfer the data to the current GPU device.
         if isinstance(inputs, (list,)):
             for i in range(len(inputs)):
                 inputs[i] = inputs[i].cuda(non_blocking=True)
-                #torch.cat(labels)
                     
         else:
             inputs = inputs.cuda(non_blocking=True)
         
         if len(inputs[i].shape) > 5:
-            # logger.info(inputs[i].shape)
             
             labels = torch.repeat_interleave(labels,inputs[i].size(1),0)
         
@@ -78,13 +74,6 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             if len(inputs[i].shape) > 5:
                 
                 inputs[i] = inputs[i].view((-1,)+inputs[i].shape[2:])
-                
-            # labels = labels.view([-1]).long()
-        # logger.info(labels.shape)
-        # logger.info(inputs[i].shape)
-        # sys.stdout.flush()
-        # logger.info(labels)
-        # logger.info(inputs[0].shape)
 
         labels = labels.cuda()
         for key, val in meta.items():
@@ -105,7 +94,10 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
 
         else:
             # Perform the forward pass.
-            preds = model(inputs)
+            if 'masks' in meta:
+                preds = model( (inputs, meta['masks']) )
+            else:
+                preds = model(inputs)
         
         ####################################################################################################################################
         # check activations
@@ -161,60 +153,64 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             
                 
         out_keys = preds.keys()
+        total_loss = 0
+
         if cfg.PREDICTIVE.ENABLE:
 
             errors = preds['pred_errors']
             if 'frame_errors' in preds:
                 frame_errors = preds['frame_errors']
 
-
-        if cfg.PREDICTIVE.CPC:
-            cpc_loss = preds['cpc_loss']
-            
-        # if isinstance(preds, dict):
-        if cfg.SUPERVISED:
-            preds = preds['logits']
-
-        total_loss = 0
-        if cfg.PREDICTIVE.ENABLE:
+            if 'IoU' in preds:
+                iou = preds['IoU']
+            if 'Acc' in preds:
+                acc = preds['Acc']
             
             pred_loss = errors.mean()
             total_loss += pred_loss
-            if 'frame_errors' in out_keys:
-                total_loss += frame_errors
+
+            # if 'frame_errors' in out_keys:
+            #     total_loss += frame_errors
             # copy_baseline = F.smooth_l1_loss(inputs[i][:,:,1:] - inputs[i][:,:,:-1], torch.zeros_like(inputs[i][:,:,1:]))
             # copy_baseline = F.l1_loss(inputs[i][:,:,1:] - inputs[i][:,:,:-1], torch.zeros_like(inputs[i][:,:,1:]))
-            
-        if cfg.PREDICTIVE.CPC:
-            total_loss += cpc_loss
-        
-        if cfg.MODEL.LOSS_FUNC != '' and cfg.SUPERVISED:
-            # Explicitly declare reduction to mean.
-            loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
 
-            # Compute the loss.
-            loss = loss_fun(preds, labels)
-            
-            total_loss += loss
-        
+        if cfg.PREDICTIVE.CPC:
+            cpc_loss = preds['cpc_loss']
+            total_loss += cpc_loss
+
+        if 'cbp_penalty' in preds:
+            penalty = preds['cbp_penalty']
+            total_loss += penalty
+
+        if cfg.SUPERVISED:
+            preds = preds['logits']
+
+            if cfg.MODEL.LOSS_FUNC != '':
+                # Explicitly declare reduction to mean.
+                loss_fun = losses.get_loss_func(cfg.MODEL.LOSS_FUNC)(reduction="mean")
+
+                # Compute the loss.
+                loss = loss_fun(preds, labels)
+                
+                total_loss += loss
         
         # check Nan Loss.
         misc.check_nan_losses(total_loss)
 
         # Perform the backward pass.
         optimizer.zero_grad()
+
         total_loss.backward()
-        # Update the parameters.
-        
+
         ####################################################################################################################################
         # check gradients
+        if writer is not None and global_iters%cfg.SUMMARY_PERIOD==0:
+            n_p = model.module.named_parameters() if hasattr(model,'module') else model.named_parameters()
+            fig = viz_helpers.plot_grad_flow_v2(n_p)
+            writer.add_figure('grad_flow/grad_flow', fig, global_iters)
         ####################################################################################################################################
-        # if writer is not None and global_iters%cfg.SUMMARY_PERIOD==0:
-            
-        #     n_p = model.module.named_parameters() if hasattr(model,'module') else model.named_parameters()
-        #     fig = viz_helpers.plot_grad_flow_v2(n_p)
-        #     writer.add_figure('grad_flow/grad_flow', fig, global_iters)
 
+        # Update the parameters.
         optimizer.step()
 
         if cfg.DETECTION.ENABLE:
@@ -236,12 +232,16 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             
             # Gather all the predictions across all the devices.
             if cfg.NUM_GPUS > 1:
+
                 if cfg.PREDICTIVE.ENABLE:
                     pred_loss = du.all_reduce([pred_loss])
                     pred_loss = pred_loss[0]
                     if 'frame_errors' in out_keys:
                         frame_errors = du.all_reduce([frame_errors])[0]
-                        
+                    if 'IoU' in preds:
+                        iou = du.all_reduce([iou])[0]
+                    if 'Acc' in preds:
+                        acc = du.all_reduce([acc])[0]
                     # copy_baseline = du.all_reduce([copy_baseline])
                     # copy_baseline = copy_baseline[0]
 
@@ -251,6 +251,9 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 if cfg.SUPERVISED:
                     loss, top1_err, top5_err = du.all_reduce([loss, top1_err, top5_err])
 
+                if 'cbp_penalty' in out_keys:
+                    penalty = du.all_reduce([penalty])[0]
+
             loss_logs = {}
             if cfg.PREDICTIVE.ENABLE:
                 pred_loss = pred_loss.item()
@@ -258,6 +261,11 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 if 'frame_errors' in out_keys:
                     frame_errors = frame_errors.item()
                     loss_logs['frame_errors']= frame_errors 
+
+                if 'IoU' in preds:
+                    loss_logs['IoU'] = iou.item() 
+                if 'Acc' in preds:
+                    loss_logs['Acc'] = acc.item() 
                 # copy_baseline = copy_baseline.item()
                 # loss_logs['copy_comp'] = copy_baseline
             if cfg.PREDICTIVE.CPC:
@@ -275,7 +283,9 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                 loss_logs['loss_class']= loss
                 loss_logs['top5_err']= top5_err
                 loss_logs['top1_err']= top1_err
-                
+            
+            if 'cbp_penalty' in out_keys:
+                loss_logs['cbp_penalty'] = penalty.item()
 
             train_meter.iter_toc()
             # Update and log stats.
@@ -295,7 +305,11 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
                     # logger.info(inputs[i].shape)
                     # sys.stdout.flush()
                     inputs[0] = inputs[0][:min(3,len(inputs[0]))] 
-                    frames = model(inputs, extra=['frames'], autoreg=True)['frames']
+                    if 'masks' in meta:
+                        frames = model((inputs, meta['masks'][:min(3,len(inputs[0]))]), extra=['frames'])['frames']
+                    else:
+                        frames = model(inputs, extra=['frames'])['frames']
+                    
 
                     n_rows = inputs[0].size(2)-1
 
@@ -384,8 +398,7 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
 
             if cfg.PREDICTIVE.CPC:
                 cpc_loss = preds['cpc_loss']
-                
-            # if isinstance(preds, dict):
+
             if cfg.SUPERVISED:
                 preds = preds['logits']
                 
@@ -408,12 +421,10 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
             # Gather all the predictions across all the devices.
             if cfg.NUM_GPUS > 1:
                 if cfg.PREDICTIVE.ENABLE:
-                    pred_loss = du.all_reduce([pred_loss])
-                    pred_loss = pred_loss[0]
+                    pred_loss = du.all_reduce([pred_loss])[0]
                     
                 if cfg.PREDICTIVE.CPC:
-                    cpc_loss = du.all_reduce([cpc_loss])
-                    cpc_loss = cpc_loss[0]
+                    cpc_loss = du.all_reduce([cpc_loss])[0]
                 
                 if cfg.SUPERVISED:
                     loss, top1_err, top5_err = du.all_reduce([loss, top1_err, top5_err])
@@ -428,21 +439,18 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
             # if cfg.NUM_GPUS > 1:
             #     top1_err, top5_err = du.all_reduce([top1_err, top5_err])
 
-            
-
+            # Copy the errors from GPU to CPU (sync point).
             loss_logs = {}
             if cfg.PREDICTIVE.ENABLE:
-                pred_loss = pred_loss.item()
-                loss_logs['loss_pred']= pred_loss
+                loss_logs['loss_pred']= pred_loss.item()
+
             if cfg.PREDICTIVE.CPC:
-                cpc_loss = cpc_loss.item()
-                loss_logs['loss_cpc']= cpc_loss
+                loss_logs['loss_cpc']= cpc_loss.item()
+
             if cfg.SUPERVISED:
-                # Copy the errors from GPU to CPU (sync point).
-                loss, top1_err, top5_err = loss.item(), top1_err.item(), top5_err.item()
-                loss_logs['loss_class']= loss
-                loss_logs['top1_err']= top1_err
-                loss_logs['top5_err']= top5_err
+                loss_logs['loss_class']= loss.item()
+                loss_logs['top1_err']= top1_err.item()
+                loss_logs['top5_err']= top5_err.item()
 
             val_meter.iter_toc()
             # Update and log stats.
@@ -555,10 +563,10 @@ def train(cfg):
         train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, cfg)
 
         # Compute precise BN stats.
-        if cfg.BN.USE_PRECISE_STATS and len(get_bn_modules(model)) > 0:
-            calculate_and_update_precise_bn(
-                train_loader, model, cfg.BN.NUM_BATCHES_PRECISE
-            )
+        # if cfg.BN.USE_PRECISE_STATS and len(get_bn_modules(model)) > 0:
+        #     calculate_and_update_precise_bn(
+        #         train_loader, model, cfg.BN.NUM_BATCHES_PRECISE
+        #     )
 
         # Save a checkpoint.
         if cu.is_checkpoint_epoch(cur_epoch, cfg.TRAIN.CHECKPOINT_PERIOD):

@@ -63,6 +63,7 @@ _C.TRAIN.CHECKPOINT_TYPE = "pytorch"
 # If True, perform inflation when loading checkpoint.
 _C.TRAIN.CHECKPOINT_INFLATE = False
 
+
 # ---------------------------------------------------------------------------- #
 # Testing options
 # ---------------------------------------------------------------------------- #
@@ -171,6 +172,9 @@ _C.MODEL.MODEL_NAME = "SlowFast"
 
 # The number of classes to predict for the model.
 _C.MODEL.NUM_CLASSES = 400
+
+# The number of segmentation classes to predict for the model.
+_C.MODEL.SEG_CLASSES = 6
 
 # Loss function.
 _C.MODEL.LOSS_FUNC = "cross_entropy"
