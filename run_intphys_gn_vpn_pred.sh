@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --mem=120G
+#SBATCH --mem=60G
 #SBATCH -n 20
 #SBATCH -J IP_GN
 #SBATCH -p gpu 
