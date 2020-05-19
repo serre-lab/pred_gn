@@ -278,4 +278,3 @@ def test_videos(cfg):
         images = [Image.fromarray(image.astype(np.uint8), 'RGB') for image in images]
         images[0].save(os.path.join(cfg.OUTPUT_DIR,'%s_pred-%f_cpc-%d.gif'%(class_name, loss_pred, loss_cpc)), 
                 save_all=True, append_images=images[1:], optimize=False, duration=40, loop=0)
-        

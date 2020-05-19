@@ -1,39 +1,32 @@
+import numpy as np
+from functools import partial
+import fvcore.nn.weight_init as weight_init
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
-import numpy as np
+from torch import nn as nn
 from torch.nn import init
 
-from functools import partial
+import slowfast.utils.logging as logging
+
+from .batch_norm import GroupNorm, get_norm
+from .build import MODEL_REGISTRY
+from .gn_helper import (
+    BasicBlock, BasicStem, Bottleneck, ResNetSimpleHead, SpatialTransformer, TemporalCausalConv3d,
+    conv1x3x3, downsample_basic_block)
+from .rnns import hConvGRUCell, tdConvGRUCell, tdConvGRUCell_err
 
 # from layers.fgru_base import fGRUCell2 as fGRUCell
 # from layers.fgru_base import fGRUCell2_td as fGRUCell_td
 
-import numpy as np
-import fvcore.nn.weight_init as weight_init
-import torch
-import torch.nn.functional as F
-from torch import nn
-
-from .batch_norm import get_norm, GroupNorm
-
-from .rnns import hConvGRUCell, tdConvGRUCell, tdConvGRUCell_err
 
 
-from .gn_helper import  TemporalCausalConv3d, \
-                        BasicBlock, \
-                        Bottleneck, \
-                        BasicStem, \
-                        ResNetSimpleHead, \
-                        SpatialTransformer, \
-                        conv1x3x3, \
-                        downsample_basic_block
+
+
                         
-import slowfast.utils.logging as logging
 
 logger = logging.get_logger(__name__)
 
-from .build import MODEL_REGISTRY
 
 __all__ = [
     "GN_R2D_VPN",
@@ -523,4 +516,3 @@ class SpatialTransformer(nn.Module):
         x = F.grid_sample(input_trans, grid, align_corners=True)
 
         return x
-

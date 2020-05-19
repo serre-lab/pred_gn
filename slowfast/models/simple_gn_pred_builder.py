@@ -1,18 +1,19 @@
+import numpy as np
+from functools import partial
+import fvcore.nn.weight_init as weight_init
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
-import numpy as np
 from torch.nn import init
 
-from functools import partial
+import slowfast.utils.logging as logging
 
-import numpy as np
-import fvcore.nn.weight_init as weight_init
+import kornia
 
-from .batch_norm import get_norm, GroupNorm
-
-from .rnns import hConvGRUCell, tdConvGRUCell, tdConvGRUCell_err, CBP_penalty
-
+from .batch_norm import GroupNorm, get_norm
+from .build import MODEL_REGISTRY
+from .gn_helper import ResNetSimpleHead
+from .rnns import CBP_penalty, hConvGRUCell, tdConvGRUCell, tdConvGRUCell_err
 
 # from .gn_helper import  TemporalCausalConv3d, \
 #                         BasicBlock, \
@@ -23,14 +24,10 @@ from .rnns import hConvGRUCell, tdConvGRUCell, tdConvGRUCell_err, CBP_penalty
 #                         conv1x3x3, \
 #                         downsample_basic_block
 
-from .gn_helper import  ResNetSimpleHead
 
-import kornia
-import slowfast.utils.logging as logging
 
 logger = logging.get_logger(__name__)
 
-from .build import MODEL_REGISTRY
 
 __all__ = [
     "GN_PRED",
@@ -510,4 +507,3 @@ class SpatialTransformer(nn.Module):
         x = F.grid_sample(input_trans, grid, align_corners=True)
 
         return x
-

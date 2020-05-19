@@ -7,15 +7,17 @@ import argparse
 import sys
 import torch
 
-sys.stdout.flush()
-
-
 import slowfast.utils.checkpoint as cu
 import slowfast.utils.multiprocessing as mpu
 from slowfast.config.defaults import get_cfg
 
 from test_net import test
 from train_net import train
+
+sys.stdout.flush()
+
+
+
 
 
 def parse_args():

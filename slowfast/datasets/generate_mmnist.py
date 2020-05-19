@@ -1,10 +1,8 @@
 import math
+import numpy as np
 import os
 import sys
-
-import numpy as np
 from PIL import Image
-
 
 ###########################################################################################
 # script to generate moving mnist video dataset (frame by frame) as described in
@@ -178,4 +176,3 @@ os.mkdir(os.path.join(folder, 'train'))
 dat = np.load('/users/azerroug/data/azerroug/mmnist/moving_mnist.npy')
 for i in range(dat.shape[0]):
     np.save(os.path.join(folder, 'train', '%05d.npy'%i), dat[i])
-

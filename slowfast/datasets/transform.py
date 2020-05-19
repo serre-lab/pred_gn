@@ -7,6 +7,7 @@ import torch
 
 import kornia.geometry.transform as kgt
 
+
 def random_short_side_scale_jitter(images, min_size, max_size, boxes=None):
     """
     Perform a spatial short scale jittering on the given images and

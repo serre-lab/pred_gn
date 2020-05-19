@@ -1,30 +1,22 @@
 
 import argparse
+import numpy as np
+import os
 import sys
 import torch
-
+from PIL import Image
 from torch.nn import functional as F
-import torchvision as tv
 
 import slowfast.utils.checkpoint as cu
 import slowfast.utils.distributed as du
+import slowfast.utils.logging as logging
 import slowfast.utils.multiprocessing as mpu
 from slowfast.config.defaults import get_cfg
-
-import numpy as np
-import torch
-
 from slowfast.datasets import loader
 from slowfast.datasets.build import build_dataset
-import slowfast.utils.logging as logging
-
 from slowfast.models import build_model
 
-from PIL import Image
-
-
-
-import os
+import torchvision as tv
 
 logger = logging.get_logger(__name__)
 

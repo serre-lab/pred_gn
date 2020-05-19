@@ -351,6 +351,12 @@ _C.SOLVER.OPTIMIZING_METHOD = "sgd"
 # Misc options
 # ---------------------------------------------------------------------------- #
 
+_C.NAME = ""
+
+_C.NEP_ID = 0
+
+_C.TAGS = []
+
 # Number of GPUs to use (applies to both training and testing).
 _C.NUM_GPUS = 1
 
@@ -378,6 +384,7 @@ _C.DIST_BACKEND = "nccl"
 
 _C.SUPERVISED = True
 
+_C.DEBUG = False
 
 # ---------------------------------------------------------------------------- #
 # Common train/test data loader options

@@ -1,20 +1,15 @@
-import torch.nn as nn
-import torch.nn.functional as F
-import torch
 import numpy as np
-from torch.nn import init
-
 from functools import partial
-
-import numpy as np
 import fvcore.nn.weight_init as weight_init
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from torch import nn
-
-from .batch_norm import get_norm
+from torch import nn as nn
+from torch.nn import init
 
 import slowfast.utils.logging as logging
+
+from .batch_norm import get_norm
 
 logger = logging.get_logger(__name__)
 
@@ -436,4 +431,3 @@ class SpatialTransformer(nn.Module):
         x = F.grid_sample(input_trans, grid, align_corners=True)
 
         return x
-

@@ -1,6 +1,7 @@
 
-from datasets import hmdb51
 from config.defaults import get_cfg
+from datasets import hmdb51
+
 cfg = get_cfg()
 # Load config from cfg.
 cfg.merge_from_file('../configs/HMDB/I3D.yaml')

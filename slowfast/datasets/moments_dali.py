@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
+import copy
+import math
 import os
 import random
+import sys
+from glob import glob
 import torch
 import torch.utils.data
 
 import slowfast.utils.logging as logging
+
+import nvidia.dali.ops as ops
+import nvidia.dali.types as types
+from nvidia.dali.pipeline import Pipeline
+from nvidia.dali.plugin import pytorch
 
 # from . import decoder as decoder
 # from . import transform as transform
@@ -277,16 +286,7 @@ import slowfast.utils.logging as logging
 #         return frames
 
 
-import sys
-import copy
-from glob import glob
-import math
-import os
 
-from nvidia.dali.pipeline import Pipeline
-from nvidia.dali.plugin import pytorch
-import nvidia.dali.ops as ops
-import nvidia.dali.types as types
 
 class VideoReaderPipeline(Pipeline):
     def __init__(self, batch_size, sequence_length, num_threads, device_id, files, crop_size):

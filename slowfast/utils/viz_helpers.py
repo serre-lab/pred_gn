@@ -1,9 +1,10 @@
+import numpy as np
 import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+
 matplotlib.use('Agg') 
 
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.lines import Line2D
 
 def plot_grad_flow_v2(named_parameters):
     '''Plots the gradients flowing through different layers in the net during training.

@@ -3,20 +3,15 @@
 
 """Train a video classification model."""
 
-import os
-
-
 import numpy as np
+import os
 import pprint
+import sys
 import torch
 import torch.nn.functional as F
-
-import torchvision as tv
-
-import sys
-from torch.utils.tensorboard import SummaryWriter
-
 from fvcore.nn.precise_bn import get_bn_modules, update_bn_stats
+from PIL import Image
+from torch.utils.tensorboard import SummaryWriter
 
 import slowfast.models.losses as losses
 import slowfast.models.optimizer as optim
@@ -26,18 +21,18 @@ import slowfast.utils.logging as logging
 import slowfast.utils.metrics as metrics
 import slowfast.utils.misc as misc
 import slowfast.utils.viz_helpers as viz_helpers
-
 from slowfast.datasets import loader
 from slowfast.models import build_model
 from slowfast.utils.meters import AVAMeter, TrainMeter, ValMeter
 
-from PIL import Image
-
+import neptune
+import torchvision as tv
+from neptune.sessions import Session
 
 logger = logging.get_logger(__name__)
 
 
-def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, cfg):
+def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, nep, cfg):
     """
     Perform the video training for one epoch.
     Args:
@@ -296,6 +291,13 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
             if writer is not None and global_iters%cfg.LOG_PERIOD==0:
                 for k,v in loss_logs.items():
                     writer.add_scalar('loss/'+k.strip('loss_'), train_meter.stats[k].get_win_median(), global_iters)
+            if nep is not None and global_iters%cfg.LOG_PERIOD==0:
+                for k,v in loss_logs.items():
+                    nep.log_metric(k.strip('loss_'), train_meter.stats[k].get_win_median())
+
+                nep.log_metric('global_iters', global_iters)
+                            
+                    
                 # writer.add_scalar('loss/top1_err', train_meter.mb_top1_err.get_win_median(), global_iters)
                 # writer.add_scalar('loss/top5_err', train_meter.mb_top5_err.get_win_median(), global_iters)
                 # writer.add_scalar('loss/loss', train_meter.loss.get_win_median(), global_iters)
@@ -340,7 +342,7 @@ def train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, 
 
 
 @torch.no_grad()
-def eval_epoch(val_loader, model, val_meter, cur_epoch, cfg):
+def eval_epoch(val_loader, model, val_meter, cur_epoch, nep, cfg):
     """
     Evaluate the model on the val set.
     Args:
@@ -495,6 +497,8 @@ def train(cfg):
         cfg (CfgNode): configs. Details can be found in
             slowfast/config/defaults.py
     """
+
+        
     # Set random seed from configs.
     np.random.seed(cfg.RNG_SEED)
     torch.manual_seed(cfg.RNG_SEED)
@@ -508,8 +512,37 @@ def train(cfg):
     
     if du.get_rank()==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS):
         writer = SummaryWriter(log_dir=cfg.OUTPUT_DIR)
+
     else:
         writer = None
+
+    if du.get_rank()==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS) and not cfg.DEBUG:
+        tags = []
+        if 'TAGS' in cfg and cfg.TAGS !=[]:
+            tags=list(cfg.TAGS)
+        neptune.set_project('Serre-Lab/motion')
+        
+        ######################
+        overrides = sys.argv[1:]
+    
+        overrides_dict = {}
+        for i in range(len(overrides)//2):
+            overrides_dict[overrides[2*i]] = overrides[2*i+1]   
+        overrides_dict['dir'] = cfg.OUTPUT_DIR
+        ######################
+        
+        
+        if 'neptune_ID' in cfg and cfg.NEP_ID != 0:  
+            session = Session()
+            project = session.get_project(project_qualified_name='Serre-Lab/motion')
+            nep_experiment = project.get_experiments(id=cfg.NEP_ID)[0]
+
+        else:
+            nep_experiment = neptune.create_experiment (name=cfg.NAME,
+                                        params=overrides_dict,
+                                        tags=tags)
+    else:
+        nep_experiment=None
 
     # Build the video model and print model statistics.
     model = build_model(cfg)
@@ -560,7 +593,7 @@ def train(cfg):
         # Shuffle the dataset.
         loader.shuffle_dataset(train_loader, cur_epoch)
         # Train for one epoch.
-        train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, cfg)
+        train_epoch(train_loader, model, optimizer, train_meter, cur_epoch, writer, nep_experiment, cfg)
 
         # Compute precise BN stats.
         # if cfg.BN.USE_PRECISE_STATS and len(get_bn_modules(model)) > 0:
@@ -573,4 +606,4 @@ def train(cfg):
             cu.save_checkpoint(cfg.OUTPUT_DIR, model, optimizer, cur_epoch, cfg)
         # Evaluate the model on validation set.
         if misc.is_eval_epoch(cfg, cur_epoch):
-            eval_epoch(val_loader, model, val_meter, cur_epoch, cfg)
+            eval_epoch(val_loader, model, val_meter, cur_epoch, nep_experiment, cfg)

@@ -11,7 +11,6 @@ import slowfast.utils.weight_init_helper as init_helper
 from . import head_helper, resnet_helper, stem_helper
 from .build import MODEL_REGISTRY
 
-
 # Number of blocks for different stages given the model depth.
 _MODEL_STAGE_DEPTH = {50: (3, 4, 6, 3), 101: (3, 4, 23, 3)}
 

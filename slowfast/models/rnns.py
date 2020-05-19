@@ -1,9 +1,9 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from .batch_norm import get_norm
 from torch.autograd import Function
 
+from .batch_norm import get_norm
 
 # class RBPFun(Function):
 #     @staticmethod

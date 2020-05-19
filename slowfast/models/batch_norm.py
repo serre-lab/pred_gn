@@ -1,9 +1,11 @@
 import logging
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from torch import nn
 from torch.autograd.function import Function
 from torch.nn import functional as F
+from torch.nn.modules.instancenorm import _InstanceNorm
 
 # from detectron2.utils import comm
 from slowfast.utils.distributed import get_world_size
@@ -11,9 +13,6 @@ from slowfast.utils.distributed import get_world_size
 # from nn.modules.instancenorm import _InstanceNorm
 # from nn.modules.batchnorm import _NormBase
 
-import torch
-import torch.nn.functional as F
-from torch.nn.modules.instancenorm import _InstanceNorm
 
 # import slowfast.utils.logging as logging
 

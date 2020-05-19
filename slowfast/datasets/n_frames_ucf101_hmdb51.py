@@ -1,7 +1,8 @@
-from __future__ import print_function, division
+from __future__ import division, print_function
 import os
-import sys
 import subprocess
+import sys
+
 
 def class_process(dir_path, class_name):
   class_path = os.path.join(dir_path, class_name)

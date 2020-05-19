@@ -6,6 +6,7 @@
 import builtins
 import decimal
 import logging
+import os
 import sys
 import simplejson
 
@@ -34,10 +35,18 @@ def setup_logging(cfg):
     if du.is_master_proc(cfg.NUM_GPUS):
         # Enable logging for the master process.
         logging.root.handlers = []
-        logging.basicConfig(
-            level=logging.INFO, format=_FORMAT, stream=sys.stdout
-        )
         
+        path = cfg.OUTPUT_DIR
+
+        # logging.basicConfig(
+        #     level=logging.INFO, format=_FORMAT, stream=sys.stdout
+        # )
+
+        logging.basicConfig(level=logging.INFO,
+                        format=_FORMAT,
+                        handlers=[logging.FileHandler(os.path.join(path,"out.log")),
+                                logging.StreamHandler(sys.stdout)])
+
         logging.info(du.get_rank())
         logging.info(du.get_world_size())
     else:

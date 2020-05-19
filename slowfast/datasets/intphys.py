@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
-import torch
-import torch.utils.data as data
-from PIL import Image
-import os
-import math
+import copy
 import functools
 import json
-import copy
-
+import math
+import numpy as np
 import os
 import random
 import torch
-import torch.utils.data
-import numpy as np
+import torch.utils.data as data
+from PIL import Image
 
 import slowfast.utils.logging as logging
 
-# from . import decoder as decoder
+from . import ava_helper as ava_helper
+from . import cv2_transform as cv2_transform
 from . import transform as transform
 from . import utils as utils
 from .build import DATASET_REGISTRY
-
-from . import ava_helper as ava_helper
-from . import cv2_transform as cv2_transform
 
 logger = logging.get_logger(__name__)
 

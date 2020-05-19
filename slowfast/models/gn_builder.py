@@ -1,19 +1,22 @@
+import numpy as np
+from functools import partial
+import fvcore.nn.weight_init as weight_init
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
-import numpy as np
+from torch import nn as nn
 from torch.nn import init
 
-from functools import partial
+# from .head_helper import ResNetSimpleHead
+# from .stem_helper import BasicStem
+import slowfast.utils.logging as logging
+
+# from .backbone import Backbone
+from .build import MODEL_REGISTRY
 
 # from layers.fgru_base import fGRUCell2 as fGRUCell
 # from layers.fgru_base import fGRUCell2_td as fGRUCell_td
 
-import numpy as np
-import fvcore.nn.weight_init as weight_init
-import torch
-import torch.nn.functional as F
-from torch import nn
 # from .rnns import hConvGRUCell, tdConvGRUCell
 
 # from detectron2.layers import (
@@ -25,14 +28,9 @@ from torch import nn
 #     get_norm,
 # )
 
-# from .head_helper import ResNetSimpleHead
-# from .stem_helper import BasicStem
-import slowfast.utils.logging as logging
 
 logger = logging.get_logger(__name__)
 
-# from .backbone import Backbone
-from .build import MODEL_REGISTRY
 
 __all__ = [
     "ResNetBlockBase",

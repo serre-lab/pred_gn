@@ -2,24 +2,25 @@
 import logging
 import os
 from collections import OrderedDict
-import torch
 from glob import glob
-
 import detectron2.utils.comm as comm
+import torch
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog
-from detectron2.engine import DefaultTrainer,
+from detectron2.engine import DefaultTrainer
+from detectron2.utils.logger import setup_logger
+
+from test_net import test
+from train_net import train
+
                             # SimpleTrainer,
                             default_argument_parser, 
                             default_setup, 
                             hooks, 
                             launch
 
-from test_net import test
-from train_net import train
 
-from detectron2.utils.logger import setup_logger
 
 class Trainer(DefaultTrainer): # DefaultTrainer
     """

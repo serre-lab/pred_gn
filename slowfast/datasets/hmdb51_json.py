@@ -1,8 +1,9 @@
-from __future__ import print_function, division
+from __future__ import division, print_function
+import json
 import os
 import sys
-import json
 import pandas as pd
+
 
 def convert_csv_to_dict(csv_dir_path, split_index, jpg_dir_path):
     database = {}
