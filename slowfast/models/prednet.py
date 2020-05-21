@@ -9,7 +9,7 @@ from torch.nn.modules.utils import _pair
 import slowfast.utils.logging as logging
 
 from .build import MODEL_REGISTRY
-from .rnns import hConvGRUCell
+from .rnns import hConvGRUCell, ConvLSTMCell, ConvLSTMCell_C
 
 logger = logging.get_logger(__name__)
 
@@ -33,7 +33,7 @@ class PredNet(nn.Module):
         # assert output_mode in default_output_modes, 'Invalid output_mode: ' + str(output_mode)
 
         for i in range(self.n_layers):
-            cell = ConvLSTMCell(2 * self.a_channels[i] + self.r_channels[i+1], self.r_channels[i],
+            cell = ConvLSTMCell_C(2 * self.a_channels[i] + self.r_channels[i+1], self.r_channels[i],
                                 (3, 3))
             setattr(self, 'cell{}'.format(i), cell)
 
@@ -82,7 +82,7 @@ class PredNet(nn.Module):
         time_steps = input.size(2)
         total_error = []
         frames = []
-        
+        frame_error = 0
         for t in range(time_steps):
             A = input[:,:,t]
             A = A.float() #type(torch.cuda.FloatTensor)
@@ -111,6 +111,9 @@ class PredNet(nn.Module):
                 A_hat = conv(R_seq[l])
                 if l == 0:
                     frame_prediction = A_hat
+                    if t>0:
+                        frame_error += torch.pow(A_hat - A, 2).detach().mean((1,2,3))
+                
                 pos = F.relu(A_hat - A)
                 neg = F.relu(A - A_hat)
                 E = torch.cat([pos, neg],1)
@@ -127,10 +130,8 @@ class PredNet(nn.Module):
         output = {}
         output['pred_errors'] = torch.stack(total_error, 2)*torch.Tensor([1]+[0.1]*(self.n_layers-1)).to(mean_error.device)[None,:,None] # batch x n_layers x nt
 
-
-        output['frame_errors'] = output['pred_errors'][:,0].mean()
+        output['frame_errors'] = (frame_error/(time_steps-1)).mean() #output['pred_errors'][:,0].mean()
         output['pred_errors'] = output['pred_errors'].sum(1)
-        
                 
         if 'frames' in extra:
             output['frames'] = torch.stack(frames, 2)
@@ -138,7 +139,7 @@ class PredNet(nn.Module):
 
 
 
-@MODEL_REGISTRY.register()
+# @MODEL_REGISTRY.register()
 class PredNet_hGRU(nn.Module):
     def __init__(self, cfg): #R_channels=(3, 48, 96, 192), A_channels=(3, 48, 96, 192)
         super(PredNet_hGRU, self).__init__()
@@ -226,6 +227,7 @@ class PredNet_hGRU(nn.Module):
         total_error = []
         frames = []
         
+        frame_error = 0
         for t in range(time_steps):
             A = input[:,:,t]
             A = A.float() #type(torch.cuda.FloatTensor)
@@ -259,6 +261,9 @@ class PredNet_hGRU(nn.Module):
                 A_hat = conv(R_seq[l])
                 if l == 0:
                     frame_prediction = A_hat
+                    if t>0:
+                        frame_error += torch.pow(A_hat - A, 2).detach().mean((1,2,3))
+                
                 pos = F.relu(A_hat - A)
                 neg = F.relu(A - A_hat)
                 E = torch.cat([pos, neg],1)
@@ -276,9 +281,8 @@ class PredNet_hGRU(nn.Module):
         output['pred_errors'] = torch.stack(total_error, 2)*torch.Tensor([1]+[0.1]*(self.n_layers-1)).to(mean_error.device)[None,:,None] # batch x n_layers x nt
 
 
-        output['frame_errors'] = output['pred_errors'][:,0].mean()
+        output['frame_errors'] = (frame_error/(time_steps-1)).mean() #output['pred_errors'][:,0].mean()
         output['pred_errors'] = output['pred_errors'].sum(1)
-        
                 
         if 'frames' in extra:
             output['frames'] = torch.stack(frames, 2)
@@ -308,81 +312,7 @@ class SatLU(nn.Module):
 
 # https://gist.github.com/Kaixhin/57901e91e5c5a8bac3eb0cbbdd3aba81
 
-class ConvLSTMCell(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, dilation=1, groups=1, bias=True):
-        super(ConvLSTMCell, self).__init__()
-        if in_channels % groups != 0:
-            raise ValueError('in_channels must be divisible by groups')
-        if out_channels % groups != 0:
-            raise ValueError('out_channels must be divisible by groups')
-        kernel_size = _pair(kernel_size)
-        stride = _pair(stride)
-        padding = _pair(padding)
-        dilation = _pair(dilation)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
-        self.padding_h = tuple(
-            k // 2 for k, s, p, d in zip(kernel_size, stride, padding, dilation))
-        self.dilation = dilation
-        self.groups = groups
-        self.weight_ih = nn.Parameter(torch.Tensor(
-            4 * out_channels, in_channels // groups, *kernel_size))
-        self.weight_hh = nn.Parameter(torch.Tensor(
-            4 * out_channels, out_channels // groups, *kernel_size))
-        self.weight_ch = nn.Parameter(torch.Tensor(
-            3 * out_channels, out_channels // groups, *kernel_size))
-        if bias:
-            self.bias_ih = nn.Parameter(torch.Tensor(4 * out_channels))
-            self.bias_hh = nn.Parameter(torch.Tensor(4 * out_channels))
-            self.bias_ch = nn.Parameter(torch.Tensor(3 * out_channels))
-        else:
-            self.register_parameter('bias_ih', None)
-            self.register_parameter('bias_hh', None)
-            self.register_parameter('bias_ch', None)
-        self.register_buffer('wc_blank', torch.zeros(1, 1, 1, 1))
-        self.reset_parameters()
 
-    def reset_parameters(self):
-        n = 4 * self.in_channels
-        for k in self.kernel_size:
-            n *= k
-        stdv = 1. / math.sqrt(n)
-        self.weight_ih.data.uniform_(-stdv, stdv)
-        self.weight_hh.data.uniform_(-stdv, stdv)
-        self.weight_ch.data.uniform_(-stdv, stdv)
-        if self.bias_ih is not None:
-            self.bias_ih.data.uniform_(-stdv, stdv)
-            self.bias_hh.data.uniform_(-stdv, stdv)
-            self.bias_ch.data.uniform_(-stdv, stdv)
-
-    def forward(self, input, hx):
-        h_0, c_0 = hx
-        wx = F.conv2d(input, self.weight_ih, self.bias_ih,
-                      self.stride, self.padding, self.dilation, self.groups)
-
-        wh = F.conv2d(h_0, self.weight_hh, self.bias_hh, self.stride,
-                      self.padding_h, self.dilation, self.groups)
-
-        # Cell uses a Hadamard product instead of a convolution?
-        wc = F.conv2d(c_0, self.weight_ch, self.bias_ch, self.stride,
-                      self.padding_h, self.dilation, self.groups)
-
-        wxhc = wx + wh + torch.cat([wc[:, :2 * self.out_channels], 
-                                    self.wc_blank.expand(wc.size(0), wc.size(1) // 3, wc.size(2), wc.size(3)), 
-                                    wc[:, 2 * self.out_channels:]], 
-                                    1)
-
-        i = torch.sigmoid(wxhc[:, :self.out_channels])
-        f = torch.sigmoid(wxhc[:, self.out_channels:2 * self.out_channels])
-        g = torch.tanh(wxhc[:, 2 * self.out_channels:3 * self.out_channels])
-        o = torch.sigmoid(wxhc[:, 3 * self.out_channels:])
-
-        c_1 = f * c_0 + i * g
-        h_1 = o * torch.tanh(c_1)
-        return h_1, (h_1, c_1)
 
 
 def info(prefix, var):

@@ -532,7 +532,7 @@ def train(cfg):
         ######################
         
         
-        if 'neptune_ID' in cfg and cfg.NEP_ID != 0:  
+        if 'NEP_ID' in cfg and cfg.NEP_ID != "":  
             session = Session()
             project = session.get_project(project_qualified_name='Serre-Lab/motion')
             nep_experiment = project.get_experiments(id=cfg.NEP_ID)[0]

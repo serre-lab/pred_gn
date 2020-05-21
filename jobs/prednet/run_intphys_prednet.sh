@@ -1,37 +1,41 @@
 #!/bin/bash
 #SBATCH --mem=60G
-#SBATCH -n 4
+#SBATCH -n 2
 #SBATCH -J MM_PN_basic
 #SBATCH -p gpu 
 #SBATCH -o cur_logs/%x_%J.out
 #SBATCH -e cur_logs/%x_%J.err
 #SBATCH --time=48:00:00
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH --account=carney-tserre-condo
-#SBATCH -C quadrortx
+#SBATCH -C v100
 # SBATCH -C v100 quadrortx
 
 module load anaconda/3-5.2.0
 source activate sf
 
 
-EXP_NAME="Prednet_intphys"
+EXP_NAME="Prednet_intphys_C"
 
 MODEL_NAME="PredNet"
-BATCH_SIZE=20
+BATCH_SIZE=100
 N_FRAMES=20
-NUM_GPUS=2
+NUM_GPUS=1
 
 DEBUG=False
+
+
 
 port=$(shuf -i10005-10099 -n1)
 dist_url="tcp://localhost:$port"
 
 DATE=`date +%Y-%m-%d_%H-%M-%S`
 
-OUT_DIR="/users/azerroug/data/azerroug/slowfast/outputs/PredNet/${DATE}_${EXP_NAME}"
+# OUT_DIR="/users/azerroug/data/azerroug/slowfast/outputs/PredNet/${DATE}_${EXP_NAME}"
 
-python tools/run_net.py \
+OUT_DIR="/users/azerroug/data/azerroug/slowfast/outputs/PredNet/2020-05-20_14-49-56_Prednet_intphys_C"
+
+python tools/debug.py \
   --cfg configs/IntPhys/Prednet.yaml \
   --init_method $dist_url \
   DEBUG $DEBUG \
@@ -44,6 +48,7 @@ python tools/run_net.py \
   MODEL.MODEL_NAME $MODEL_NAME \
   DATA_LOADER.NUM_WORKERS 8 \
   OUTPUT_DIR $OUT_DIR \
+
 
 
 # python tools/visualize_dataset.py \

@@ -54,6 +54,15 @@ def get_default_image_loader():
 
 
 
+# Copy baselines for 20 timesteps training 10000
+# l1 copy baseline train 0.01076708
+# mse copy baseline train 0.0037651432
+
+# Copy baselines for 20 timesteps validation 5000
+# l1 copy baseline val 0.003580888
+# mse copy baseline val 0.0008071857
+
+
 @DATASET_REGISTRY.register()
 class Intphys(data.Dataset):
     """

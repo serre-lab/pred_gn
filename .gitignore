@@ -4,6 +4,10 @@ __pycache__/
 
 config/dataset/
 
+logs/
+cur_logs/
+
+
 *.npy
 *.pyc
 *.ipynb

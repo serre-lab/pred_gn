@@ -11,10 +11,14 @@ import slowfast.utils.checkpoint as cu
 import slowfast.utils.multiprocessing as mpu
 from slowfast.config.defaults import get_cfg
 
+from slowfast.datasets import loader
+
 from test_net import test
 from train_net import train
 
 sys.stdout.flush()
+
+import numpy as np
 
 import logging
 from slowfast.models import build_model
@@ -112,14 +116,14 @@ def main():
     args = parse_args()
     cfg = load_config(args)
 
-    overrides = sys.argv[1:]
+    # overrides = sys.argv[1:]
     
-    overrides_dict = {}
-    for i in range(len(overrides)//2):
-        overrides_dict[overrides[2*i]] = overrides[2*i+1]   
-    overrides_dict['dir'] = cfg.OUTPUT_DIR
+    # overrides_dict = {}
+    # for i in range(len(overrides)//2):
+    #     overrides_dict[overrides[2*i]] = overrides[2*i+1]   
+    # overrides_dict['dir'] = cfg.OUTPUT_DIR
     
-    print(overrides_dict)
+    # print(overrides_dict)
         
     # cfg.NUM_GPUS=1
     # # Build the video model and print model statistics.
@@ -133,6 +137,51 @@ def main():
     # output = model(input_)
 
     # print(output['pred_errors'].shape)
+
+    train_loader = loader.construct_loader(cfg, "train")
+    val_loader = loader.construct_loader(cfg, "val")
+
+    l1_baseline = []
+    mse_baseline = []
+    for cur_iter, (inputs, labels, _, meta) in enumerate(train_loader):
+        err = inputs[0][:,:,1:] - inputs[0][:,:,:-1]
+        copy_baseline_l1 = torch.abs(err).mean([1, 3, 4]) #.view([inputs[0].shape[0], -1])
+        copy_baseline_mse = torch.pow(err, 2).mean([1, 3, 4])
+
+        l1_baseline.append(copy_baseline_l1.data.numpy())
+        mse_baseline.append(copy_baseline_mse.data.numpy())
+
+        if cur_iter%20 == 0:
+            print(cur_iter)
+            
+    l1_baseline = np.concatenate(l1_baseline)
+    mse_baseline = np.concatenate(mse_baseline)
+    
+    print('l1 copy baseline train', l1_baseline.mean())
+    print('mse copy baseline train', mse_baseline.mean())
+    np.save('copy_baseline_train_20_timesteps.npy', {'copy_mse': mse_baseline, 'copy_l1': l1_baseline})
+
+    l1_baseline = []
+    mse_baseline = []
+    for cur_iter, (inputs, labels, _, meta) in enumerate(val_loader):
+        err = inputs[0][:,:,1:] - inputs[0][:,:,:-1]
+        copy_baseline_l1 = torch.abs(err).mean([1, 3, 4]) #.view([inputs[0].shape[0], -1])
+        copy_baseline_mse = torch.pow(err, 2).mean([1, 3, 4])
+
+        l1_baseline.append(copy_baseline_l1.data.numpy())
+        mse_baseline.append(copy_baseline_mse.data.numpy())
+        if cur_iter%20 == 0:
+            print(cur_iter) 
+    
+    l1_baseline = np.concatenate(l1_baseline)
+    mse_baseline = np.concatenate(mse_baseline)
+    
+    print('l1 copy baseline val', l1_baseline.mean())
+    print('mse copy baseline val', mse_baseline.mean())
+    np.save('copy_baseline_val_20_timesteps.npy', {'copy_mse': mse_baseline, 'copy_l1': l1_baseline})
+
+
+    
 
 if __name__ == "__main__":
     # torch.multiprocessing.set_start_method("forkserver")

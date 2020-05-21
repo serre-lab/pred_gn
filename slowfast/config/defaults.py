@@ -353,7 +353,7 @@ _C.SOLVER.OPTIMIZING_METHOD = "sgd"
 
 _C.NAME = ""
 
-_C.NEP_ID = 0
+_C.NEP_ID = ""
 
 _C.TAGS = []
 
