@@ -6,6 +6,11 @@ from torch.nn.modules.utils import _pair
 import math
 from torch.autograd import Variable
 from torch.nn import Parameter
+from torch.nn import init
+
+import numpy as numpy
+
+
 
 from .batch_norm import get_norm
 
@@ -1408,3 +1413,594 @@ class ConvLSTMCell_C(nn.Module):
 
 def hard_sigmoid(x, t=2.5):
     return torch.clamp((x+t)/(2*t), 0, 1)
+
+class ConvLSTMCell_CG1x1_noI(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, dilation=1, groups=1, bias=True):
+        super(ConvLSTMCell_CG1x1_noI, self).__init__()
+        if in_channels % groups != 0:
+            raise ValueError('in_channels must be divisible by groups')
+        if out_channels % groups != 0:
+            raise ValueError('out_channels must be divisible by groups')
+        kernel_size = _pair(kernel_size)
+        stride = _pair(stride)
+        padding = _pair(padding)
+        dilation = _pair(dilation)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.padding_h = tuple(
+            k // 2 for k, s, p, d in zip(kernel_size, stride, padding, dilation))
+        self.dilation = dilation
+        self.groups = groups
+        self.weight_ih = nn.Parameter(torch.Tensor(
+            out_channels, in_channels // groups, *kernel_size))
+        self.weight_hh = nn.Parameter(torch.Tensor(
+            out_channels, out_channels // groups, *kernel_size))
+        
+        self.weight_ih_g = nn.Parameter(torch.Tensor(
+            2 * out_channels, in_channels // groups, 1, 1))
+        self.weight_hh_g = nn.Parameter(torch.Tensor(
+            2 * out_channels, out_channels // groups, 1, 1))
+
+        # self.weight_ch = nn.Parameter(torch.Tensor(
+        #     3 * out_channels, out_channels // groups, *kernel_size))
+        if bias:
+            self.bias_ih = nn.Parameter(torch.Tensor(out_channels))
+            self.bias_hh = nn.Parameter(torch.Tensor(out_channels))
+            # self.bias_ch = nn.Parameter(torch.Tensor(3 * out_channels))
+
+            self.bias_ih_g = nn.Parameter(torch.Tensor(2 * out_channels))
+            self.bias_hh_g = nn.Parameter(torch.Tensor(2 * out_channels))
+        else:
+            self.register_parameter('bias_ih', None)
+            self.register_parameter('bias_hh', None)
+            # self.register_parameter('bias_ch', None)
+            self.register_parameter('bias_ih_g', None)
+            self.register_parameter('bias_hh_g', None)
+        # self.register_buffer('wc_blank', torch.zeros(1, 1, 1, 1))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        n = 4 * self.in_channels
+        for k in self.kernel_size:
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        self.weight_ih.data.uniform_(-stdv, stdv)
+        self.weight_hh.data.uniform_(-stdv, stdv)
+        if self.bias_ih is not None:
+            self.bias_ih.data.uniform_(-stdv, stdv)
+            self.bias_hh.data.uniform_(-stdv, stdv)
+        self.weight_ih_g.data.uniform_(-stdv, stdv)
+        self.weight_hh_g.data.uniform_(-stdv, stdv)
+        if self.bias_ih_g is not None:
+            self.bias_ih_g.data.uniform_(-stdv, stdv)
+            self.bias_hh_g.data.uniform_(-stdv, stdv)
+
+    def forward(self, input, hx):
+        h_0, c_0 = hx
+        wx = F.conv2d(input, self.weight_ih, self.bias_ih,
+                      self.stride, self.padding, self.dilation, self.groups)
+
+        wh = F.conv2d(h_0, self.weight_hh, self.bias_hh, self.stride,
+                      self.padding_h, self.dilation, self.groups)
+        
+        wx_g = F.conv2d(input, self.weight_ih_g, self.bias_ih_g, stride=1, padding=0)
+
+        wh_g = F.conv2d(h_0, self.weight_hh_g, self.bias_hh_g, stride=1, padding=0)
+        
+        wxhc_g = wx_g + wh_g
+        wxhc = wx + wh
+
+        # i = hard_sigmoid(wxhc_g[:, :self.out_channels])
+        f = hard_sigmoid(wxhc_g[:, self.out_channels:])
+        g = torch.tanh(wxhc)
+        o = hard_sigmoid(wxhc_g[:, self.out_channels:])
+
+        # c_1 = f * c_0 + i * g
+        c_1 = f * c_0 + g
+        h_1 = o * torch.tanh(c_1)
+        return h_1, (h_1, c_1)
+
+
+class ConvLSTMCell_CG1x1_noO(ConvLSTMCell_CG1x1_noI):
+
+    def reset_parameters(self):
+        n = 4 * self.in_channels
+        for k in self.kernel_size:
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        self.weight_ih.data.uniform_(-stdv, stdv)
+        self.weight_hh.data.uniform_(-stdv, stdv)
+        if self.bias_ih is not None:
+            self.bias_ih.data.uniform_(-stdv, stdv)
+            self.bias_hh.data.uniform_(-stdv, stdv)
+        self.weight_ih_g.data.uniform_(-stdv, stdv)
+        self.weight_hh_g.data.uniform_(-stdv, stdv)
+        if self.bias_ih_g is not None:
+            self.bias_ih_g.data.uniform_(-stdv, stdv)
+            self.bias_hh_g.data.uniform_(-stdv, stdv)
+
+    def forward(self, input, hx):
+        h_0, c_0 = hx
+        wx = F.conv2d(input, self.weight_ih, self.bias_ih,
+                      self.stride, self.padding, self.dilation, self.groups)
+
+        wh = F.conv2d(h_0, self.weight_hh, self.bias_hh, self.stride,
+                      self.padding_h, self.dilation, self.groups)
+        
+        wx_g = F.conv2d(input, self.weight_ih_g, self.bias_ih_g, stride=1, padding=0)
+
+        wh_g = F.conv2d(h_0, self.weight_hh_g, self.bias_hh_g, stride=1, padding=0)
+        
+        wxhc_g = wx_g + wh_g
+        wxhc = wx + wh
+
+        i = hard_sigmoid(wxhc_g[:, :self.out_channels])
+        f = hard_sigmoid(wxhc_g[:, self.out_channels:])
+        g = torch.tanh(wxhc)
+        # o = hard_sigmoid(wxhc_g[:, self.out_channels:])
+
+        c_1 = f * c_0 + i * g
+        c_1 = f * c_0 + g
+        h_1 = torch.tanh(c_1)
+        # h_1 = o * torch.tanh(c_1)
+        return h_1, (h_1, c_1)
+
+class ConvLSTMCell_CG1x1_noF(ConvLSTMCell_CG1x1_noI):
+
+    def reset_parameters(self):
+        n = 4 * self.in_channels
+        for k in self.kernel_size:
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        self.weight_ih.data.uniform_(-stdv, stdv)
+        self.weight_hh.data.uniform_(-stdv, stdv)
+        if self.bias_ih is not None:
+            self.bias_ih.data.uniform_(-stdv, stdv)
+            self.bias_hh.data.uniform_(-stdv, stdv)
+        self.weight_ih_g.data.uniform_(-stdv, stdv)
+        self.weight_hh_g.data.uniform_(-stdv, stdv)
+        if self.bias_ih_g is not None:
+            self.bias_ih_g.data.uniform_(-stdv, stdv)
+            self.bias_hh_g.data.uniform_(-stdv, stdv)
+
+    def forward(self, input, hx):
+        h_0, c_0 = hx
+        wx = F.conv2d(input, self.weight_ih, self.bias_ih,
+                      self.stride, self.padding, self.dilation, self.groups)
+
+        wh = F.conv2d(h_0, self.weight_hh, self.bias_hh, self.stride,
+                      self.padding_h, self.dilation, self.groups)
+        
+        wx_g = F.conv2d(input, self.weight_ih_g, self.bias_ih_g, stride=1, padding=0)
+
+        wh_g = F.conv2d(h_0, self.weight_hh_g, self.bias_hh_g, stride=1, padding=0)
+        
+        wxhc_g = wx_g + wh_g
+        wxhc = wx + wh
+
+        i = hard_sigmoid(wxhc_g[:, :self.out_channels])
+        # f = hard_sigmoid(wxhc_g[:, self.out_channels:])
+        g = torch.tanh(wxhc)
+        o = hard_sigmoid(wxhc_g[:, self.out_channels:])
+
+        c_1 = c_0 + i * g
+        # c_1 = f * c_0 + g
+        h_1 = torch.tanh(c_1)
+        h_1 = o * torch.tanh(c_1)
+        return h_1, (h_1, c_1)
+
+
+def hard_sigmoid(x, t=2.5):
+    return torch.clamp((x+t)/(2*t), 0, 1)
+
+
+class ConvLSTMCell_CG1x1(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, dilation=1, groups=1, bias=True):
+        super(ConvLSTMCell_CG1x1, self).__init__()
+        if in_channels % groups != 0:
+            raise ValueError('in_channels must be divisible by groups')
+        if out_channels % groups != 0:
+            raise ValueError('out_channels must be divisible by groups')
+        kernel_size = _pair(kernel_size)
+        stride = _pair(stride)
+        padding = _pair(padding)
+        dilation = _pair(dilation)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.padding_h = tuple(
+            k // 2 for k, s, p, d in zip(kernel_size, stride, padding, dilation))
+        self.dilation = dilation
+        self.groups = groups
+        self.weight_ih = nn.Parameter(torch.Tensor(
+            out_channels, in_channels // groups, *kernel_size))
+        self.weight_hh = nn.Parameter(torch.Tensor(
+            out_channels, out_channels // groups, *kernel_size))
+        
+        self.weight_ih_g = nn.Parameter(torch.Tensor(
+            3 * out_channels, in_channels // groups, 1, 1))
+        self.weight_hh_g = nn.Parameter(torch.Tensor(
+            3 * out_channels, out_channels // groups, 1, 1))
+
+        # self.weight_ch = nn.Parameter(torch.Tensor(
+        #     3 * out_channels, out_channels // groups, *kernel_size))
+        if bias:
+            self.bias_ih = nn.Parameter(torch.Tensor(out_channels))
+            self.bias_hh = nn.Parameter(torch.Tensor(out_channels))
+            # self.bias_ch = nn.Parameter(torch.Tensor(3 * out_channels))
+
+            self.bias_ih_g = nn.Parameter(torch.Tensor(3 * out_channels))
+            self.bias_hh_g = nn.Parameter(torch.Tensor(3 * out_channels))
+        else:
+            self.register_parameter('bias_ih', None)
+            self.register_parameter('bias_hh', None)
+            # self.register_parameter('bias_ch', None)
+            self.register_parameter('bias_ih_g', None)
+            self.register_parameter('bias_hh_g', None)
+        # self.register_buffer('wc_blank', torch.zeros(1, 1, 1, 1))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        n = 4 * self.in_channels
+        for k in self.kernel_size:
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        self.weight_ih.data.uniform_(-stdv, stdv)
+        self.weight_hh.data.uniform_(-stdv, stdv)
+        if self.bias_ih is not None:
+            self.bias_ih.data.uniform_(-stdv, stdv)
+            self.bias_hh.data.uniform_(-stdv, stdv)
+        self.weight_ih_g.data.uniform_(-stdv, stdv)
+        self.weight_hh_g.data.uniform_(-stdv, stdv)
+        if self.bias_ih_g is not None:
+            self.bias_ih_g.data.uniform_(-stdv, stdv)
+            self.bias_hh_g.data.uniform_(-stdv, stdv)
+
+    def forward(self, input, hx):
+        h_0, c_0 = hx
+        wx = F.conv2d(input, self.weight_ih, self.bias_ih,
+                      self.stride, self.padding, self.dilation, self.groups)
+
+        wh = F.conv2d(h_0, self.weight_hh, self.bias_hh, self.stride,
+                      self.padding_h, self.dilation, self.groups)
+        
+        wx_g = F.conv2d(input, self.weight_ih_g, self.bias_ih_g, stride=1, padding=0)
+
+        wh_g = F.conv2d(h_0, self.weight_hh_g, self.bias_hh_g, stride=1, padding=0)
+        
+        wxhc_g = wx_g + wh_g
+        wxhc = wx + wh
+
+        i = hard_sigmoid(wxhc_g[:, :self.out_channels])
+        f = hard_sigmoid(wxhc_g[:, self.out_channels:2 * self.out_channels])
+        g = torch.tanh(wxhc)
+        o = hard_sigmoid(wxhc_g[:, 2 * self.out_channels:])
+
+        c_1 = f * c_0 + i * g
+        h_1 = o * torch.tanh(c_1)
+        return h_1, (h_1, c_1)
+
+
+class ConvLSTMCell_CGpool(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, dilation=1, groups=1, bias=True):
+        super(ConvLSTMCell_CGpool, self).__init__()
+        if in_channels % groups != 0:
+            raise ValueError('in_channels must be divisible by groups')
+        if out_channels % groups != 0:
+            raise ValueError('out_channels must be divisible by groups')
+        kernel_size = _pair(kernel_size)
+        stride = _pair(stride)
+        padding = _pair(padding)
+        dilation = _pair(dilation)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        self.padding_h = tuple(
+            k // 2 for k, s, p, d in zip(kernel_size, stride, padding, dilation))
+        self.dilation = dilation
+        self.groups = groups
+        self.weight_ih = nn.Parameter(torch.Tensor(
+            out_channels, in_channels // groups, *kernel_size))
+        self.weight_hh = nn.Parameter(torch.Tensor(
+            out_channels, out_channels // groups, *kernel_size))
+        
+        self.weight_ih_g = nn.Parameter(torch.Tensor(
+            3 * out_channels, in_channels // groups, 1, 1))
+        self.weight_hh_g = nn.Parameter(torch.Tensor(
+            3 * out_channels, out_channels // groups, 1, 1))
+
+        # self.weight_ch = nn.Parameter(torch.Tensor(
+        #     3 * out_channels, out_channels // groups, *kernel_size))
+        if bias:
+            self.bias_ih = nn.Parameter(torch.Tensor(out_channels))
+            self.bias_hh = nn.Parameter(torch.Tensor(out_channels))
+            # self.bias_ch = nn.Parameter(torch.Tensor(3 * out_channels))
+
+            self.bias_ih_g = nn.Parameter(torch.Tensor(3 * out_channels))
+            self.bias_hh_g = nn.Parameter(torch.Tensor(3 * out_channels))
+        else:
+            self.register_parameter('bias_ih', None)
+            self.register_parameter('bias_hh', None)
+            # self.register_parameter('bias_ch', None)
+            self.register_parameter('bias_ih_g', None)
+            self.register_parameter('bias_hh_g', None)
+        # self.register_buffer('wc_blank', torch.zeros(1, 1, 1, 1))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        n = 4 * self.in_channels
+        for k in self.kernel_size:
+            n *= k
+        stdv = 1. / math.sqrt(n)
+        self.weight_ih.data.uniform_(-stdv, stdv)
+        self.weight_hh.data.uniform_(-stdv, stdv)
+        # self.weight_ch.data.uniform_(-stdv, stdv)
+        if self.bias_ih is not None:
+            self.bias_ih.data.uniform_(-stdv, stdv)
+            self.bias_hh.data.uniform_(-stdv, stdv)
+            # self.bias_ch.data.uniform_(-stdv, stdv)
+        self.weight_ih_g.data.uniform_(-stdv, stdv)
+        self.weight_hh_g.data.uniform_(-stdv, stdv)
+        # self.weight_ch.data.uniform_(-stdv, stdv)
+        if self.bias_ih_g is not None:
+            self.bias_ih_g.data.uniform_(-stdv, stdv)
+            self.bias_hh_g.data.uniform_(-stdv, stdv)
+            # self.bias_ch.data.uniform_(-stdv, stdv)
+
+    def forward(self, input, hx):
+        h_0, c_0 = hx
+        wx = F.conv2d(input, self.weight_ih, self.bias_ih,
+                      self.stride, self.padding, self.dilation, self.groups)
+
+        wh = F.conv2d(h_0, self.weight_hh, self.bias_hh, self.stride,
+                      self.padding_h, self.dilation, self.groups)
+        
+        wx_g = F.conv2d(input, self.weight_ih_g, self.bias_ih_g, stride=1, padding=0)
+
+        wh_g = F.conv2d(h_0, self.weight_hh_g, self.bias_hh_g, stride=1, padding=0)
+        
+
+        wxhc_g = wx_g + wh_g
+        wxhc = wx + wh
+
+        i = hard_sigmoid(wxhc_g[:, :self.out_channels].mean([1,2,3]))
+        f = hard_sigmoid(wxhc_g[:, self.out_channels:2 * self.out_channels])
+        g = torch.tanh(wxhc)
+        o = hard_sigmoid(wxhc_g[:, 2 * self.out_channels:])
+
+
+        c_1 = f * c_0 + i[:,None,None,None] * g
+        h_1 = o * torch.tanh(c_1)
+        return h_1, (h_1, c_1)
+
+
+
+
+class ConvGRUCell(nn.Module):
+    """
+    Generate a convolutional GRU cell
+    """
+
+    def __init__(self, input_size, hidden_size, kernel_size):
+        super().__init__()
+        padding = kernel_size // 2
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.reset_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        self.update_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        self.out_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+
+        init.orthogonal_(self.reset_gate.weight)
+        init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        init.constant_(self.reset_gate.bias, 0.)
+        init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+
+    def forward(self, input_, prev_state):
+
+        # get batch and spatial sizes
+        batch_size = input_.data.size()[0]
+        spatial_size = input_.data.size()[2:]
+
+        # generate empty prev_state, if None is provided
+        if prev_state is None:
+            shape = input_.shape
+            shape[1] = self.hidden_size
+            prev_state = input_.new_zeros(shape)
+
+        # data size is [batch, channel, height, width]
+        stacked_inputs = torch.cat([input_, prev_state], dim=1)
+        update = torch.sigmoid(self.update_gate(stacked_inputs))
+        reset = torch.sigmoid(self.reset_gate(stacked_inputs))
+        out_inputs = torch.tanh(self.out_gate(torch.cat([input_, prev_state * reset], dim=1)))
+        new_state = prev_state * (1 - update) + out_inputs * update
+
+        return new_state
+    
+    def reset_parameters(self):
+        init.orthogonal_(self.reset_gate.weight)
+        init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        init.constant_(self.reset_gate.bias, 0.)
+        init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+        # n = 4 * self.in_channels
+        # for k in self.kernel_size:
+        #     n *= k
+        # stdv = 1. / math.sqrt(n)
+        # self.weight_ih.data.uniform_(-stdv, stdv)
+        # self.weight_hh.data.uniform_(-stdv, stdv)
+        # # self.weight_ch.data.uniform_(-stdv, stdv)
+        # if self.bias_ih is not None:
+        #     self.bias_ih.data.uniform_(-stdv, stdv)
+        #     self.bias_hh.data.uniform_(-stdv, stdv)
+        #     # self.bias_ch.data.uniform_(-stdv, stdv)
+
+class ConvGRUCell_out(nn.Module):
+    """
+    Generate a convolutional GRU cell
+    """
+
+    def __init__(self, input_size, hidden_size, kernel_size):
+        super().__init__()
+        padding = kernel_size // 2
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        # self.reset_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        self.update_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        self.out_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+
+        # init.orthogonal_(self.reset_gate.weight)
+        init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        # init.constant_(self.reset_gate.bias, 0.)
+        init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+
+    def forward(self, input_, prev_state):
+
+        # get batch and spatial sizes
+        batch_size = input_.data.size()[0]
+        spatial_size = input_.data.size()[2:]
+
+        # generate empty prev_state, if None is provided
+        if prev_state is None:
+            shape = input_.shape
+            shape[1] = self.hidden_size
+            prev_state = input_.new_zeros(shape)
+
+        # data size is [batch, channel, height, width]
+        stacked_inputs = torch.cat([input_, prev_state], dim=1)
+        update = torch.sigmoid(self.update_gate(stacked_inputs))
+        # reset = torch.sigmoid(self.reset_gate(stacked_inputs))
+        # out_inputs = torch.tanh(self.out_gate(torch.cat([input_, prev_state * reset], dim=1)))
+        out_inputs = torch.tanh(self.out_gate(stacked_inputs))
+        new_state = prev_state * (1 - update) + out_inputs * update
+
+        return new_state
+    
+    def reset_parameters(self):
+        # init.orthogonal_(self.reset_gate.weight)
+        init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        # init.constant_(self.reset_gate.bias, 0.)
+        init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+class ConvGRUCell_in(nn.Module):
+    """
+    Generate a convolutional GRU cell
+    """
+
+    def __init__(self, input_size, hidden_size, kernel_size):
+        super().__init__()
+        padding = kernel_size // 2
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.reset_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        # self.update_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        self.out_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+
+        init.orthogonal_(self.reset_gate.weight)
+        # init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        init.constant_(self.reset_gate.bias, 0.)
+        # init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+
+    def forward(self, input_, prev_state):
+
+        # get batch and spatial sizes
+        batch_size = input_.data.size()[0]
+        spatial_size = input_.data.size()[2:]
+
+        # generate empty prev_state, if None is provided
+        if prev_state is None:
+            shape = input_.shape
+            shape[1] = self.hidden_size
+            prev_state = input_.new_zeros(shape)
+
+        # data size is [batch, channel, height, width]
+        stacked_inputs = torch.cat([input_, prev_state], dim=1)
+        # update = torch.sigmoid(self.update_gate(stacked_inputs))
+        reset = torch.sigmoid(self.reset_gate(stacked_inputs))
+        out_inputs = torch.tanh(self.out_gate(torch.cat([input_, prev_state * reset], dim=1)))
+        new_state = out_inputs
+        # new_state = prev_state * (1 - update) + out_inputs * update
+
+        return new_state
+    
+    def reset_parameters(self):
+        init.orthogonal_(self.reset_gate.weight)
+        # init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        init.constant_(self.reset_gate.bias, 0.)
+        # init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+class ConvGRUCell_RNN(nn.Module):
+    """
+    Convolutional GRU cell without the resent and update gates (basically a nromal rnn) 
+    """
+
+    def __init__(self, input_size, hidden_size, kernel_size):
+        super().__init__()
+        padding = kernel_size // 2
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        # self.reset_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        # self.update_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+        self.out_gate = nn.Conv2d(input_size + hidden_size, hidden_size, kernel_size, padding=padding)
+
+        # init.orthogonal_(self.reset_gate.weight)
+        # init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        # init.constant_(self.reset_gate.bias, 0.)
+        # init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+
+    def forward(self, input_, prev_state):
+
+        # get batch and spatial sizes
+        batch_size = input_.data.size()[0]
+        spatial_size = input_.data.size()[2:]
+
+        # generate empty prev_state, if None is provided
+        if prev_state is None:
+            shape = input_.shape
+            shape[1] = self.hidden_size
+            prev_state = input_.new_zeros(shape)
+
+        # data size is [batch, channel, height, width]
+        stacked_inputs = torch.cat([input_, prev_state], dim=1)
+        # update = torch.sigmoid(self.update_gate(stacked_inputs))
+        # reset = torch.sigmoid(self.reset_gate(stacked_inputs))
+        out_inputs = torch.tanh(self.out_gate(stacked_inputs))
+        # new_state = prev_state * (1 - update) + out_inputs * update
+        
+        new_state = out_inputs
+        
+        return new_state
+    
+    def reset_parameters(self):
+        # init.orthogonal_(self.reset_gate.weight)
+        # init.orthogonal_(self.update_gate.weight)
+        init.orthogonal_(self.out_gate.weight)
+        # init.constant_(self.reset_gate.bias, 0.)
+        # init.constant_(self.update_gate.bias, 0.)
+        init.constant_(self.out_gate.bias, 0.)
+
+

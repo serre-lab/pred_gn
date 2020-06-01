@@ -11,5 +11,9 @@ from .gn_pred_vpn_builder import GN_R2D_VPN
 from .simple_gn_pred_vpn_builder import GN_VPN
 from .simple_gn_pred_builder import GN_PRED
 from .simple_gn_seg_builder import GN_SEG
-from .prednet import PredNet
+from .prednet import PredNet, PredNet_E
 from .prednet_hGRU import PredNet_hGRU
+from .prednet_GRU import PredNet_GRU
+from .prednet_small import SmallPredNet
+from .gn_small import SmallGN
+

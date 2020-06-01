@@ -393,12 +393,19 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, nep, cfg):
         else:
 
             preds = model(inputs)
-            
+            aux_loss_keys = []
             if cfg.PREDICTIVE.ENABLE:
+                aux_loss_keys.append('pred_errors')
                 errors = preds['pred_errors']
                 pred_loss = errors.mean()
 
+            if 'frame_errors' in preds:
+                aux_loss_keys.append('frame_errors')
+                frame_errors = preds['frame_errors']
+
+
             if cfg.PREDICTIVE.CPC:
+                aux_loss_keys.append('cpc_loss')
                 cpc_loss = preds['cpc_loss']
 
             if cfg.SUPERVISED:
@@ -443,10 +450,14 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, nep, cfg):
 
             # Copy the errors from GPU to CPU (sync point).
             loss_logs = {}
-            if cfg.PREDICTIVE.ENABLE:
+            if 'loss_pred' in aux_loss_keys:
                 loss_logs['loss_pred']= pred_loss.item()
 
-            if cfg.PREDICTIVE.CPC:
+            if 'frame_errors' in aux_loss_keys:
+                loss_logs['frame_errors'] = frame_errors.item()
+
+
+            if 'loss_cpc' in aux_loss_keys:
                 loss_logs['loss_cpc']= cpc_loss.item()
 
             if cfg.SUPERVISED:
@@ -462,6 +473,12 @@ def eval_epoch(val_loader, model, val_meter, cur_epoch, nep, cfg):
 
         val_meter.log_iter_stats(cur_epoch, cur_iter)
         val_meter.iter_tic()
+
+    # neptune update
+    if nep is not None:
+        for k,v in loss_logs.items():
+            nep.log_metric('val_' + k.strip('loss_'), val_meter.stats[k].get_global_avg())
+
 
     # Log epoch stats.
     val_meter.log_epoch_stats(cur_epoch)
@@ -607,3 +624,6 @@ def train(cfg):
         # Evaluate the model on validation set.
         if misc.is_eval_epoch(cfg, cur_epoch):
             eval_epoch(val_loader, model, val_meter, cur_epoch, nep_experiment, cfg)
+
+        if du.get_rank()==0 and du.is_master_proc(num_gpus=cfg.NUM_GPUS) and not cfg.DEBUG:
+            nep_experiment.log_metric('epoch', cur_epoch)

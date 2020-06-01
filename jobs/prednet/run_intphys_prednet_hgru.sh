@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --account=carney-tserre-condo
 # SBATCH -C quadrortx
-# SBATCH -C v100 quadrortx
+# SBATCH -C v100 
 
 module load anaconda/3-5.2.0
 source activate sf
@@ -20,6 +20,8 @@ MODEL_NAME="PredNet_hGRU"
 BATCH_SIZE=20
 N_FRAMES=20
 NUM_GPUS=1
+
+EVAL_PERIOD=5
 
 port=$(shuf -i10005-10099 -n1)
 dist_url="tcp://localhost:$port"
@@ -40,6 +42,8 @@ python tools/run_net.py \
   NUM_GPUS $NUM_GPUS \
   DATA.NUM_FRAMES $N_FRAMES \
   TRAIN.BATCH_SIZE $BATCH_SIZE \
+  TRAIN.EVAL_PERIOD $EVAL_PERIOD \
+  TRAIN.CHECKPOINT_PERIOD 5 \
   SOLVER.MAX_EPOCH 100 \
   PREDICTIVE.CPC False \
   GN.RECURRENT_BN $RECURRENT_BN \

@@ -537,15 +537,6 @@ class ValMeter(object):
         self._cfg = cfg
         self.max_iter = max_iter
         self.iter_timer = Timer()
-        # Current minibatch errors (smoothed over a window).
-        # self.mb_top1_err = ScalarMeter(cfg.LOG_PERIOD)
-        # self.mb_top5_err = ScalarMeter(cfg.LOG_PERIOD)
-        # Min errors (over the full val set).
-        # self.min_top1_err = 100.0
-        # self.min_top5_err = 100.0
-        # Number of misclassified examples.
-        # self.num_top1_mis = 0
-        # self.num_top5_mis = 0
         self.num_samples = 0
         self.stats = {}
 
@@ -554,10 +545,6 @@ class ValMeter(object):
         Reset the Meter.
         """
         self.iter_timer.reset()
-        # self.mb_top1_err.reset()
-        # self.mb_top5_err.reset()
-        # self.num_top1_mis = 0
-        # self.num_top5_mis = 0
         self.num_samples = 0
         for k,v in self.stats.items():
             self.stats[k].reset()
@@ -582,10 +569,7 @@ class ValMeter(object):
             top5_err (float): top5 error rate.
             mb_size (int): mini batch size.
         """
-        # self.mb_top1_err.add_value(top1_err)
-        # self.mb_top5_err.add_value(top5_err)
-        # self.num_top1_mis += top1_err * mb_size
-        # self.num_top5_mis += top5_err * mb_size
+
         self.num_samples += mb_size
 
         for k,v in kwargs.items():
@@ -627,19 +611,12 @@ class ValMeter(object):
         Args:
             cur_epoch (int): the number of current epoch.
         """
-        # top1_err = self.num_top1_mis / self.num_samples
-        # top5_err = self.num_top5_mis / self.num_samples
-        # self.min_top1_err = min(self.min_top1_err, top1_err)
-        # self.min_top5_err = min(self.min_top5_err, top5_err)
+
         mem_usage = misc.gpu_mem_usage()
         stats = {
             "_type": "val_epoch",
             "epoch": "{}/{}".format(cur_epoch + 1, self._cfg.SOLVER.MAX_EPOCH),
             "time_diff": self.iter_timer.seconds(),
-            # "top1_err": top1_err,
-            # "top5_err": top5_err,
-            # "min_top1_err": self.min_top1_err,
-            # "min_top5_err": self.min_top5_err,
             "mem": int(np.ceil(mem_usage)),
         }
         for k, v in self.stats.items():

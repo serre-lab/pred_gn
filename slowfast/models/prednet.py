@@ -9,7 +9,17 @@ from torch.nn.modules.utils import _pair
 import slowfast.utils.logging as logging
 
 from .build import MODEL_REGISTRY
-from .rnns import hConvGRUCell, ConvLSTMCell, ConvLSTMCell_C
+from .rnns import (hConvGRUCell, 
+                    ConvLSTMCell, 
+                    ConvLSTMCell_C, 
+                    ConvLSTMCell_CG1x1, 
+                    ConvLSTMCell_CGpool, 
+                    ConvLSTMCell_CG1x1_noI,
+                    ConvLSTMCell_CG1x1_noF,
+                    ConvLSTMCell_CG1x1_noO )
+
+
+import kornia
 
 logger = logging.get_logger(__name__)
 
@@ -20,7 +30,7 @@ __all__ = [
 
 @MODEL_REGISTRY.register()
 class PredNet(nn.Module):
-    def __init__(self, cfg): #R_channels=(3, 48, 96, 192), A_channels=(3, 48, 96, 192)
+    def __init__(self, cfg):
         super(PredNet, self).__init__()
         R_channels=(3, 48, 96, 192)
         A_channels=(3, 48, 96, 192)
@@ -31,13 +41,28 @@ class PredNet(nn.Module):
 
         # default_output_modes = ['prediction', 'error']
         # assert output_mode in default_output_modes, 'Invalid output_mode: ' + str(output_mode)
+        if cfg.PREDNET.CELL=="ConvLSTMCell_C":
+            rnn_cell = ConvLSTMCell_C
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1":
+            rnn_cell = ConvLSTMCell_CG1x1
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CGpool":
+            rnn_cell = ConvLSTMCell_CGpool
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1_noI":
+            rnn_cell = ConvLSTMCell_CG1x1_noI
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1_noF":
+            rnn_cell = ConvLSTMCell_CG1x1_noF
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1_noO":
+            rnn_cell = ConvLSTMCell_CG1x1_noO
+        else:
+            rnn_cell = ConvLSTMCell
 
         for i in range(self.n_layers):
-            cell = ConvLSTMCell_C(2 * self.a_channels[i] + self.r_channels[i+1], self.r_channels[i],
+            cell = rnn_cell(2 * self.a_channels[i] + self.r_channels[i+1], self.r_channels[i],
                                 (3, 3))
             setattr(self, 'cell{}'.format(i), cell)
 
         for i in range(self.n_layers):
+            
             conv = nn.Sequential(nn.Conv2d(self.r_channels[i], self.a_channels[i], 3, padding=1), nn.ReLU())
             if i == 0:
                 conv.add_module('satlu', SatLU())
@@ -52,6 +77,10 @@ class PredNet(nn.Module):
             setattr(self, 'update_A{}'.format(l), update_A)
 
         self.reset_parameters()
+        
+        # self.color_aug = kornia.augmentation.ColorJitter(brightness= 0.1, contrast= 0.3, saturation = 0.3, hue = 0.4, return_transform=True)
+        # self.affine_aug = kornia.augmentation.RandomAffine(degrees=(-3,3), translate=(5/cfg.DATA.TRAIN_CROP_SIZE,5/cfg.DATA.TRAIN_CROP_SIZE), scale=(0.9, 1.1), shear=(-0.02,0.02), return_transform=True)
+        
 
     def reset_parameters(self):
         for l in range(self.n_layers):
@@ -63,6 +92,20 @@ class PredNet(nn.Module):
         if isinstance(input, list):
             input = input[0]
         
+        # if self.training:
+        #     o_ ,aug_c = self.color_aug(input[:,:,0])
+        #     o_ ,aug_a = self.affine_aug(o_)
+        #     aug_inputs.append(o_)
+
+        #     for i in range(1,input.shape[2]):
+        #         o_ = self.affine_aug(self.color_aug(input[:,:,i], params=aug_c)[0], params=aug_a)[0]
+        #         aug_inputs.append(o_)
+        #     aug_inputs = torch.stack(aug_inputs, 2)
+
+        # else:
+        #     aug_inputs = input
+
+        # input = aug_inputs
 
         R_seq = [None] * self.n_layers
         H_seq = [None] * self.n_layers
@@ -124,6 +167,159 @@ class PredNet(nn.Module):
             if 'frames' in extra:
                 frames.append(frame_prediction)
             mean_error = torch.cat([torch.mean(e.view(e.size(0), -1), 1, keepdim=True) for e in E_seq], 1)
+            # batch x n_layers
+            if t>0:
+                total_error.append(mean_error)
+                
+        output = {}
+        output['pred_errors'] = torch.stack(total_error, 2)*torch.Tensor([1]+[0.1]*(self.n_layers-1)).to(mean_error.device)[None,:,None] # batch x n_layers x nt
+
+        output['frame_errors'] = (frame_error/(time_steps-1)).mean() #output['pred_errors'][:,0].mean()
+        output['pred_errors'] = output['pred_errors'].sum(1)
+                
+        if 'frames' in extra:
+            output['frames'] = torch.stack(frames, 2)
+        return output
+
+@MODEL_REGISTRY.register()
+class PredNet_E(nn.Module):
+    def __init__(self, cfg):
+        super(PredNet_E, self).__init__()
+        R_channels=(3, 48, 96, 192)
+        A_channels=(3, 48, 96, 192)
+        self.r_channels = R_channels + (0, )  # for convenience
+        self.a_channels = A_channels
+        self.n_layers = len(R_channels)
+        # self.output_mode = output_mode
+
+        # default_output_modes = ['prediction', 'error']
+        # assert output_mode in default_output_modes, 'Invalid output_mode: ' + str(output_mode)
+        if cfg.PREDNET.CELL=="ConvLSTMCell_C":
+            rnn_cell = ConvLSTMCell_C
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1":
+            rnn_cell = ConvLSTMCell_CG1x1
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CGpool":
+            rnn_cell = ConvLSTMCell_CGpool
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1_noI":
+            rnn_cell = ConvLSTMCell_CG1x1_noI
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1_noF":
+            rnn_cell = ConvLSTMCell_CG1x1_noF
+        elif cfg.PREDNET.CELL=="ConvLSTMCell_CG1x1_noO":
+            rnn_cell = ConvLSTMCell_CG1x1_noO
+        else:
+            rnn_cell = ConvLSTMCell
+
+        for i in range(self.n_layers):
+            cell = rnn_cell(self.a_channels[i] + self.r_channels[i+1], self.r_channels[i], (3, 3))
+            # cell = rnn_cell(2 * self.a_channels[i] + self.r_channels[i+1], self.r_channels[i], (3, 3))
+            setattr(self, 'cell{}'.format(i), cell)
+
+        for i in range(self.n_layers):
+            conv = nn.Sequential(nn.Conv2d(self.r_channels[i], self.a_channels[i], 3, padding=1), nn.ReLU())
+            if i == 0:
+                conv.add_module('satlu', SatLU())
+            setattr(self, 'conv{}'.format(i), conv)
+
+
+        self.upsample = nn.Upsample(scale_factor=2)
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        for l in range(self.n_layers - 1):
+            update_A = nn.Sequential(nn.Conv2d(self.a_channels[l], self.a_channels[l+1], (3, 3), padding=1), self.maxpool)
+            # update_A = nn.Sequential(nn.Conv2d(2 * self.a_channels[l], self.a_channels[l+1], (3, 3), padding=1), self.maxpool)
+            setattr(self, 'update_A{}'.format(l), update_A)
+
+        self.reset_parameters()
+
+        
+        self.color_aug = kornia.augmentation.ColorJitter(brightness= 0.1, contrast= 0.3, saturation = 0.3, hue = 0.4, return_transform=True)
+        self.affine_aug = kornia.augmentation.RandomAffine(degrees=(-3,3), translate=(5/cfg.DATA.TRAIN_CROP_SIZE,5/cfg.DATA.TRAIN_CROP_SIZE), scale=(0.9, 1.1), shear=(-0.02,0.02), return_transform=True)
+        
+
+    def reset_parameters(self):
+        for l in range(self.n_layers):
+            cell = getattr(self, 'cell{}'.format(l))
+            cell.reset_parameters()
+
+    def forward(self, input, extra=[], autoreg=False):
+        
+        if isinstance(input, list):
+            input = input[0]
+        
+        if self.training:
+            aug_inputs=[]
+
+            o_ ,aug_c = self.color_aug(input[:,:,0])
+            o_ ,aug_a = self.affine_aug(o_)
+            aug_inputs.append(o_)
+
+            for i in range(1,input.shape[2]):
+                o_ = self.affine_aug(self.color_aug(input[:,:,i], params=aug_c)[0], params=aug_a)[0]
+                aug_inputs.append(o_)
+            input = torch.stack(aug_inputs, 2)
+
+        R_seq = [None] * self.n_layers
+        H_seq = [None] * self.n_layers
+        E_seq = [None] * self.n_layers
+
+        w, h = input.size(-2), input.size(-1)
+        batch_size = input.size(0)
+
+        for l in range(self.n_layers):
+            E_seq[l] = torch.zeros(batch_size, self.a_channels[l], w, h).to(input.device)
+            R_seq[l] = torch.zeros(batch_size, self.r_channels[l], w, h).to(input.device)
+            
+            # E_seq[l] = input.new([batch_size, 2*self.a_channels[l], w, h])
+            # R_seq[l] = input.new([batch_size, self.r_channels[l], w, h]).zeros_
+            w = w//2
+            h = h//2
+        time_steps = input.size(2)
+        total_error = []
+        frames = []
+        frame_error = 0
+        for t in range(time_steps):
+            A = input[:,:,t]
+            A = A.float() #type(torch.cuda.FloatTensor)
+            
+            for l in reversed(range(self.n_layers)):
+                cell = getattr(self, 'cell{}'.format(l))
+                if t == 0:
+                    E = E_seq[l]
+                    R = R_seq[l]
+                    hx = (R, R)
+                else:
+                    E = E_seq[l]
+                    R = R_seq[l]
+                    hx = H_seq[l]
+                if l == self.n_layers - 1:
+                    R, hx = cell(E, hx)
+                else:
+                    tmp = torch.cat((E, self.upsample(R_seq[l+1])), 1)
+                    R, hx = cell(tmp, hx)
+                R_seq[l] = R
+                H_seq[l] = hx
+
+
+            for l in range(self.n_layers):
+                conv = getattr(self, 'conv{}'.format(l))
+                A_hat = conv(R_seq[l])
+                if l == 0:
+                    frame_prediction = A_hat
+                    if t>0:
+                        frame_error += torch.pow(A_hat - A, 2).detach().mean((1,2,3))
+                
+                # pos = F.relu(A_hat - A)
+                # neg = F.relu(A - A_hat)
+                # E = torch.cat([pos, neg],1)
+                E = A_hat - A
+                E_seq[l] = E
+                if l < self.n_layers - 1:
+                    update_A = getattr(self, 'update_A{}'.format(l))
+                    A = update_A(E)
+            if 'frames' in extra:
+                frames.append(frame_prediction)
+            mean_error = torch.cat([torch.mean(torch.abs(e.view(e.size(0), -1)), 1, keepdim=True) for e in E_seq], 1)
+            # mean_error = torch.cat([torch.mean(e.view(e.size(0), -1), 1, keepdim=True) for e in E_seq], 1)
             # batch x n_layers
             if t>0:
                 total_error.append(mean_error)

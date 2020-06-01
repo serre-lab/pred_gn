@@ -224,13 +224,24 @@ _C.GN.HORIZONTAL_UNITS= [[0, 3],
                         [4, 1]]
 _C.GN.TOPDOWN_UNITS= [[0, 1],
                     [2, 1]]
-_C.GN.RECURRENT_BN= 'GroupNorm'
+_C.GN.RECURRENT_BN= 'GN'
 
-_C.GN.FEEDFORWARD_BN= 'SyncBN' 
+_C.GN.FEEDFORWARD_BN= 'GN' 
 
 _C.GN.GALA = True
 
 _C.GN.HIDDEN_INIT = 'zeros'
+
+# -----------------------------------------------------------------------------
+# Prednet options
+# -----------------------------------------------------------------------------
+_C.PREDNET = CfgNode()
+
+_C.PREDNET.CELL = 'LSTM' # 'GRU' 'GRU_in' 'GRU_out' 'GRU_rnn'
+
+_C.PREDNET.LAYERS = [3, 48, 96, 192] 
+_C.PREDNET.LOSSES = [['FocalLoss','CPC'],[1,1e-2]]
+_C.PREDNET.EVALS = ['mse','Acc','IoU']
 
 # -----------------------------------------------------------------------------
 # Self supervised options
@@ -284,6 +295,7 @@ _C.DATA.TRAIN_CROP_SIZE = 224
 # The spatial crop size for testing.
 _C.DATA.TEST_CROP_SIZE = 256
 
+_C.DATA.NAME = ""
 ####### Only available for Moments of Time 
 #
 # Adding different augmentations of the same video in one batch

@@ -8,3 +8,4 @@ from .hmdb51 import Hmdb51  # noqa
 from .moments import Moments
 from .intphys import Intphys, Intphys_seg
 from .mmnist import Mmnist
+from .simple_motion import Simplemotion
